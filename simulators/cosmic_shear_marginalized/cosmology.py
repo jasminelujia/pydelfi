@@ -20,7 +20,7 @@ from numpy import *
 from scipy.integrate import romberg, odeint, romb, quad
 from scipy.optimize import brentq
 from scipy.interpolate import interp1d
-import simulators.cosmic_shear_marginalized.constants as const
+import simulators.cosmic_shear.constants as const
 from .utils import *
 
 
@@ -450,7 +450,7 @@ class cosmology(object):
             return self.dchioverda(xa) * xa
 
         chi = vectorize(lambda x: romberg(dchioverdlna, log(x), 0,
-                                          vec_func=True))
+                                          vec_func=True, divmax=100))
 
         # Initialize interpolation array
         if self._chi_a_interp is None:
@@ -771,14 +771,14 @@ class cosmology(object):
 
         for i in range(R_nl.size):
             sigm = lambda r: romberg(int_sigma, log(self._kmin), log(self._kmax),
-                                     args=(exp(r), g[i]), rtol=1e-4, vec_func=True) - 1
+                                     args=(exp(r), g[i]), rtol=1e-4, vec_func=True, divmax=100) - 1
             R_nl[i] = exp(brentq(sigm, -5, 1.5, rtol=1e-4))
 
             n[i] = 2.0 * romberg(int_neff, log(self._kmin), log(self._kmax),
-                                    args=(R_nl[i], g[i]), rtol=1e-4,  vec_func=True) - 3
+                                    args=(R_nl[i], g[i]), rtol=1e-4,  vec_func=True, divmax=100) - 3
 
             C[i] = (3 + n[i])**2 + 4 * romberg(int_C, log(self._kmin), log(self._kmax),
-                                                  args=(R_nl[i], g[i]), rtol=1e-4,  vec_func=True)
+                                                  args=(R_nl[i], g[i]), rtol=1e-4,  vec_func=True, divmax=100)
         k_nl = 1.0/R_nl
         return k_nl, n, C
 
@@ -924,7 +924,7 @@ class cosmology(object):
             return k * pow(k*w, 2.0) * pk
 
         return 1.0/(2.0*pi**2.0) * romberg(int_sigma, log(self._kmin),
-                                           log(self._kmax))
+                                           log(self._kmax), divmax=100)
 
     def g(self, a, a_s):
         """ Lensing efficiency kernel computed a distance chi for sources

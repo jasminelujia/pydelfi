@@ -12,7 +12,7 @@ import matplotlib.pyplot as plt
 
 class DelfiMixtureDensityNetwork():
 
-    def __init__(self, simulator, prior, asymptotic_posterior, Finv, theta_fiducial, data, n_components, n_hidden = [50, 50], activations = ['tanh', 'tanh'], names=None, labels=None, ranges=None, nwalkers=100, posterior_chain_length=1000, proposal_chain_length=100):
+    def __init__(self, simulator, prior, asymptotic_posterior, Finv, theta_fiducial, data, n_components, simulator_args = None, n_hidden = [50, 50], activations = ['tanh', 'tanh'], names=None, labels=None, ranges=None, nwalkers=100, posterior_chain_length=1000, proposal_chain_length=100):
 
         # Input x and output t dimensions
         self.D = len(data)
@@ -64,6 +64,7 @@ class DelfiMixtureDensityNetwork():
 
         # Simulator
         self.simulator = simulator
+        self.simulator_args = simulator_args
         
         # Fisher matrix and fiducial parameters
         self.Finv = Finv
@@ -105,11 +106,26 @@ class DelfiMixtureDensityNetwork():
     def run_simulation_batch(self, n_batch, ps):
     
         data_samples = np.zeros((n_batch, self.npar))
+        parameter_samples = np.zeros((n_batch, self.npar))
+
+        # Run simulations, catching exceptions (when simulator returns np.nan)
+        i = 0
+        count = 0
+        while count < n_batch:
+            try:
+                sim = self.simulator(ps[i,:], self.simulator_args)
+                if sum(np.isnan(sim.flatten())) == 0:
+                    data_samples[count,:] = sim
+                    parameter_samples[count,:] = ps[i,:]
+                    count += 1
+                else:
+                    print("Simulator return NaNs with parameter values: {}".format(ps[i,:]))
+                i += 1
+            except:
+                print("Simulator return exception with parameter values: {}".format(ps[i,:]))
+                i += 1
     
-        for i in range(n_batch):
-            data_samples[i,:] = self.simulator(ps[i,:])
-    
-        return data_samples
+        return data_samples, parameter_samples
 
     # EMCEE sampler
     def emcee_sample(self, log_likelihood, x0, burn_in_chain=100, main_chain=100):
@@ -147,11 +163,11 @@ class DelfiMixtureDensityNetwork():
     def sequential_training(self, n_initial, n_batch, n_populations, proposal, plot = True, batch_size=100, validation_split=0.1, epochs=100, patience=20):
 
         # Generate initial theta values from some broad proposal
-        self.ps = np.array([proposal.draw() for i in range(n_initial)])
+        ps = np.array([proposal.draw() for i in range(5*n_initial)])
 
         # Run simulations at those theta values
         print('Running initial {} sims...'.format(n_initial))
-        self.xs = self.run_simulation_batch(n_initial, self.ps)
+        self.xs, self.ps = self.run_simulation_batch(n_initial, ps)
         print('Done.')
 
         # Construct the initial training-set
@@ -163,7 +179,7 @@ class DelfiMixtureDensityNetwork():
 
         # Train the network on these initial simulations
         history = self.mdn.fit(self.x_train, self.y_train,
-                    batch_size=batch_size, epochs=epochs, verbose=1, validation_split=validation_split, callbacks=[keras.callbacks.EarlyStopping(monitor='val_loss', min_delta=0, patience=patience, verbose=0, mode='auto')])
+                    batch_size=int(self.n_sims/8), epochs=epochs, verbose=1, validation_split=validation_split, callbacks=[keras.callbacks.EarlyStopping(monitor='val_loss', min_delta=0, patience=patience, verbose=0, mode='auto')])
                     
         # Update the loss and validation loss
         self.loss = history.history['loss']
@@ -190,12 +206,11 @@ class DelfiMixtureDensityNetwork():
             # Sample the current posterior approximation
             print('Sampling proposal density...')
             self.proposal_samples = self.emcee_sample(self.log_geometric_mean_proposal, [self.proposal_samples[-i,:] for i in range(self.nwalkers)], main_chain=self.proposal_chain_length)
-            ps_batch = self.proposal_samples[-n_batch:,:]
             print('Done.')
     
             # Run simulations
             print('Running {} sims...'.format(n_batch))
-            xs_batch = self.run_simulation_batch(n_batch, ps_batch)
+            xs_batch, ps_batch = self.run_simulation_batch(n_batch, self.proposal_samples)
             print('Done.')
     
             # Augment the training data
@@ -209,7 +224,7 @@ class DelfiMixtureDensityNetwork():
     
             # Train the network on these initial simulations
             history = self.mdn.fit(self.x_train, self.y_train,
-                   batch_size=batch_size, epochs=epochs, verbose=1, validation_split=validation_split, callbacks=[keras.callbacks.EarlyStopping(monitor='val_loss', min_delta=0, patience=patience, verbose=0, mode='auto')])
+                   batch_size=int(self.n_sims/8), epochs=epochs, verbose=1, validation_split=validation_split, callbacks=[keras.callbacks.EarlyStopping(monitor='val_loss', min_delta=0, patience=patience, verbose=0, mode='auto')])
                    
             # Update the loss and validation loss
             self.loss = np.concatenate([self.loss, history.history['loss']])
@@ -242,6 +257,9 @@ class DelfiMixtureDensityNetwork():
             self.triangle_plot([self.posterior_samples])
     
     def fisher_pretraining(self, n_batch, proposal, plot=True, batch_size=100, validation_split=0.1, epochs=100, patience=20):
+
+        # Generate fisher pre-training data
+        print("Generating pre-training data...")
 
         # Anticipated covariance of the re-scaled data
         Cdd = np.zeros((self.npar, self.npar))
