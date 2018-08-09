@@ -296,7 +296,7 @@ def projected_score(d, projection_args):
     t = np.dot(Finv[0:len(P), 0:len(P)], t) + theta_fiducial[0:len(P)] + np.dot(Finv[:len(P),:len(P)], np.dot(Qinv[:len(P),:len(P)], prior_mean[:len(P)] - theta_fiducial[:len(P)]))
     
     # Return re-scaled statistics
-    return (t - theta_fiducial[0:len(P)])/fisher_errors[0:len(P)]
+    return t#(t - theta_fiducial[0:len(P)])/fisher_errors[0:len(P)]
 
 def simulationABC(theta, simABC_args):
     
