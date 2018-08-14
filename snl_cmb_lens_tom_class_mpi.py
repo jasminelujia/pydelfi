@@ -2,7 +2,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import scipy.interpolate as interpolate
 from simulators.cosmic_shear.cosmic_shear import *
-import ndes.nde_mpi as nde
+import ndes.nde as nde
 import distributions.priors as priors
 
 import numpy.random as npr

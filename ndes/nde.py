@@ -12,7 +12,14 @@ import matplotlib.pyplot as plt
 
 class DelfiMixtureDensityNetwork():
 
-    def __init__(self, simulator, prior, asymptotic_posterior, Finv, theta_fiducial, data, n_components, simulator_args = None, n_hidden = [50, 50], activations = ['tanh', 'tanh'], names=None, labels=None, ranges=None, nwalkers=100, posterior_chain_length=1000, proposal_chain_length=100):
+    def __init__(self, simulator, prior, asymptotic_posterior, \
+                 Finv, theta_fiducial, data, n_components, \
+                 simulator_args = None, n_hidden = [50, 50], \
+                 activations = ['tanh', 'tanh'], names=None, \
+                 labels=None, ranges=None, nwalkers=100, \
+                 posterior_chain_length=1000, proposal_chain_length=100, \
+                 rank=0, n_procs=1, comm=None, red_op=None, \
+                 show_plot=True):
 
         # Input x and output t dimensions
         self.D = len(data)
@@ -78,6 +85,7 @@ class DelfiMixtureDensityNetwork():
         self.names = names
         self.labels = labels
         self.ranges = ranges
+        self.show_plot = show_plot
     
         # Training loss, validation loss
         self.loss = []
@@ -85,6 +93,41 @@ class DelfiMixtureDensityNetwork():
         self.loss_trace = []
         self.val_loss_trace = []
         self.n_sim_trace = []
+
+        # MPI-specific setup
+        self.rank = rank
+        self.n_procs = n_procs
+        if n_procs > 1:
+            self.use_mpi = True
+            self.comm = comm
+            self.red_op = red_op
+        else:
+            self.use_mpi = False
+
+    # Divide list of jobs between MPI processes
+    def allocate_jobs(self, n_jobs):
+        n_j_allocated = 0
+        for i in range(self.n_procs):
+            n_j_remain = n_jobs - n_j_allocated
+            n_p_remain = self.n_procs - i
+            n_j_to_allocate = n_j_remain / n_p_remain
+            if self.rank == i:
+                return range(n_j_allocated, \
+                             n_j_allocated + n_j_to_allocate)
+            n_j_allocated += n_j_to_allocate
+
+    # Combine arrays from all processes assuming
+    # 1) array was initially zero
+    # 2) each process has edited a unique slice of the array
+    def complete_array(self, target_distrib):
+        if self.use_mpi:
+            target = np.zeros(target_distrib.shape, \
+                              dtype=target_distrib.dtype)
+            self.comm.Allreduce(target_distrib, target, \
+                                op=self.red_op)
+        else:
+            target = target_distrib
+        return target
     
     # Log posterior
     def log_posterior(self, x):
@@ -104,27 +147,32 @@ class DelfiMixtureDensityNetwork():
     
     # Run n_batch simulations
     def run_simulation_batch(self, n_batch, ps):
-    
+        
+        # Dimension outputs
         data_samples = np.zeros((n_batch, self.npar))
         parameter_samples = np.zeros((n_batch, self.npar))
-
-        # Run simulations, catching exceptions (when simulator returns np.nan)
-        i = 0
-        count = 0
-        while count < n_batch:
+        
+        # Run samples assigned to each process, catching exceptions 
+        # (when simulator returns np.nan).
+        i_prop = self.inds_prop[0]
+        i_acpt = self.inds_acpt[0]
+        err_msg = 'Simulator returns {:s} for parameter values: {} (rank {:d})'
+        while i_acpt <= self.inds_acpt[-1]:
             try:
-                sim = self.simulator(ps[i,:], self.simulator_args)
-                if sum(np.isnan(sim.flatten())) == 0:
-                    data_samples[count,:] = sim
-                    parameter_samples[count,:] = ps[i,:]
-                    count += 1
+                sim = self.simulator(ps[i_prop,:], self.simulator_args)
+                if np.all(np.isfinite(sim.flatten())):
+                    data_samples[i_acpt,:] = sim
+                    parameter_samples[i_acpt,:] = ps[i_prop,:]
+                    i_acpt += 1
                 else:
-                    print("Simulator return NaNs with parameter values: {}".format(ps[i,:]))
-                i += 1
+                    print(err_msg.format('NaN/inf', ps[i_prop,:], self.rank))
             except:
-                print("Simulator return exception with parameter values: {}".format(ps[i,:]))
-                i += 1
-    
+                print(err_msg.format('exception', ps[i_prop,:], self.rank))
+            i_prop += 1
+
+        # Reduce results from all processes and return
+        data_samples = self.complete_array(data_samples)
+        parameter_samples = self.complete_array(parameter_samples)
         return data_samples, parameter_samples
 
     # EMCEE sampler
@@ -160,147 +208,222 @@ class DelfiMixtureDensityNetwork():
         else:
             return np.log(like)
 
-    def sequential_training(self, n_initial, n_batch, n_populations, proposal, plot = True, batch_size=100, validation_split=0.1, epochs=100, patience=20):
+    def sequential_training(self, n_initial, n_batch, n_populations, proposal, \
+                            safety = 5, plot = True, batch_size=100, \
+                            validation_split=0.1, epochs=100, patience=20):
 
-        # Generate initial theta values from some broad proposal
-        ps = np.array([proposal.draw() for i in range(5*n_initial)])
+        # Generate initial theta values from some broad proposal on 
+        # master process and share with other processes. Overpropose
+        # by a factor of safety to (hopefully) cope gracefully with 
+        # the possibility of some bad proposals. Assign indices into 
+        # proposal array (self.inds_prop) and accepted arrays 
+        # (self.inds_acpt) to allow for easy MPI communication.
+        if self.rank == 0:
+            ps = np.array([proposal.draw() for i in range(safety * n_initial)])
+        else:
+            ps = np.zeros((safety * n_initial, self.npar))
+        if self.use_mpi:
+            self.comm.Bcast(ps, root=0)
+        self.inds_prop = self.allocate_jobs(safety * n_initial)
+        self.inds_acpt = self.allocate_jobs(n_initial)
 
         # Run simulations at those theta values
-        print('Running initial {} sims...'.format(n_initial))
+        if self.rank == 0:
+            print('Running initial {} sims...'.format(n_initial))
         self.xs, self.ps = self.run_simulation_batch(n_initial, ps)
-        print('Done.')
+        if self.rank == 0:
+            print('Done.')
 
-        # Construct the initial training-set
-        self.ps = (self.ps - self.theta_fiducial)/self.fisher_errors
-        self.xs = (self.xs - self.theta_fiducial)/self.fisher_errors
-        self.x_train = self.ps.astype(np.float32)
-        self.y_train = self.xs.astype(np.float32)
-        self.n_sims = len(self.x_train)
+        # Train on master only
+        if self.rank == 0:
 
-        # Train the network on these initial simulations
-        history = self.mdn.fit(self.x_train, self.y_train,
-                    batch_size=int(self.n_sims/8), epochs=epochs, verbose=1, validation_split=validation_split, callbacks=[keras.callbacks.EarlyStopping(monitor='val_loss', min_delta=0, patience=patience, verbose=0, mode='auto')])
-                    
-        # Update the loss and validation loss
-        self.loss = history.history['loss']
-        self.val_loss = history.history['val_loss']
-        self.loss_trace.append(history.history['loss'][-1])
-        self.val_loss_trace.append(history.history['val_loss'][-1])
-        self.n_sim_trace.append(self.n_sims)
-        
-        # Generate posterior samples
-        print('Sampling approximate posterior...')
-        self.posterior_samples = self.emcee_sample(self.log_posterior, [self.posterior_samples[-i,:] for i in range(self.nwalkers)], main_chain=self.posterior_chain_length)
-        print('Done.')
+            # Construct the initial training-set
+            self.ps = (self.ps - self.theta_fiducial)/self.fisher_errors
+            self.xs = (self.xs - self.theta_fiducial)/self.fisher_errors
+            self.x_train = self.ps.astype(np.float32)
+            self.y_train = self.xs.astype(np.float32)
+            self.n_sims = len(self.x_train)
 
-        # If plot == True, plot the current posterior estimate
-        if plot == True:
-            self.triangle_plot([self.posterior_samples])
+            # Train the network on these initial simulations
+            kcb = keras.callbacks.EarlyStopping(monitor='val_loss', \
+                                                min_delta=0, \
+                                                patience=patience, \
+                                                verbose=0, mode='auto')
+            history = self.mdn.fit(self.x_train, self.y_train, \
+                                   batch_size=batch_size, \
+                                   epochs=epochs, verbose=1, \
+                                   validation_split=validation_split, \
+                                   callbacks=[kcb])
+                        
+            # Update the loss and validation loss
+            self.loss = history.history['loss']
+            self.val_loss = history.history['val_loss']
+            self.loss_trace.append(history.history['loss'][-1])
+            self.val_loss_trace.append(history.history['val_loss'][-1])
+            self.n_sim_trace.append(self.n_sims)
+            
+            # Generate posterior samples
+            print('Sampling approximate posterior...')
+            self.posterior_samples = \
+                self.emcee_sample(self.log_posterior, \
+                                  [self.posterior_samples[-i,:] for i in range(self.nwalkers)], \
+                                  main_chain=self.posterior_chain_length)
+            print('Done.')
+
+            # If plot == True, plot the current posterior estimate
+            if plot == True:
+                self.triangle_plot([self.posterior_samples], \
+                                    savefig=True, \
+                                    filename='seq_train_post_0.pdf')
 
         # Loop through a number of populations
         for i in range(n_populations):
             
-            # Current population
-            print('Population {}/{}'.format(i+1, n_populations))
-    
-            # Sample the current posterior approximation
-            print('Sampling proposal density...')
-            self.proposal_samples = self.emcee_sample(self.log_geometric_mean_proposal, [self.proposal_samples[-i,:] for i in range(self.nwalkers)], main_chain=self.proposal_chain_length)
-            print('Done.')
-    
+            # Propose theta values on master process and share with 
+            # other processes. Again, ensure we propose more sets of 
+            # parameters than needed to cope with bad params.
+            if self.rank == 0:
+
+                # Current population
+                print('Population {}/{}'.format(i+1, n_populations))
+        
+                # Sample the current posterior approximation
+                print('Sampling proposal density...')
+                self.proposal_samples = \
+                    self.emcee_sample(self.log_geometric_mean_proposal, \
+                                      [self.proposal_samples[-j,:] for j in range(self.nwalkers)], \
+                                      main_chain=self.proposal_chain_length)
+                ps_batch = self.proposal_samples[-safety * n_batch:,:]
+                print('Done.')
+
+            else:
+                ps_batch = np.zeros((safety * n_batch, self.npar))
+            if self.use_mpi:
+                self.comm.Bcast(ps_batch, root=0)
+
             # Run simulations
-            print('Running {} sims...'.format(n_batch))
-            xs_batch, ps_batch = self.run_simulation_batch(n_batch, self.proposal_samples)
-            print('Done.')
-    
-            # Augment the training data
-            ps_batch = (ps_batch - self.theta_fiducial)/self.fisher_errors
-            xs_batch = (xs_batch - self.theta_fiducial)/self.fisher_errors
-            self.ps = np.concatenate([self.ps, ps_batch])
-            self.xs = np.concatenate([self.xs, xs_batch])
-            self.n_sims += n_batch
-            self.x_train = self.ps.astype(np.float32)
-            self.y_train = self.xs.astype(np.float32)
-    
-            # Train the network on these initial simulations
-            history = self.mdn.fit(self.x_train, self.y_train,
-                   batch_size=int(self.n_sims/8), epochs=epochs, verbose=1, validation_split=validation_split, callbacks=[keras.callbacks.EarlyStopping(monitor='val_loss', min_delta=0, patience=patience, verbose=0, mode='auto')])
-                   
-            # Update the loss and validation loss
-            self.loss = np.concatenate([self.loss, history.history['loss']])
-            self.val_loss = np.concatenate([self.val_loss, history.history['val_loss']])
-            self.loss_trace.append(history.history['loss'][-1])
-            self.val_loss_trace.append(history.history['val_loss'][-1])
-            self.n_sim_trace.append(self.n_sims)
+            self.inds_prop = self.allocate_jobs(safety * n_batch)
+            self.inds_acpt = self.allocate_jobs(n_batch)
+            if self.rank == 0:
+                print('Running {} sims...'.format(n_batch))
+            xs_batch, ps_batch = self.run_simulation_batch(n_batch, ps_batch)
+            if self.rank == 0:
+                print('Done.')
 
-            # Generate posterior samples
+            # Train on master only
+            if self.rank == 0:
+        
+                # Augment the training data
+                ps_batch = (ps_batch - self.theta_fiducial)/self.fisher_errors
+                xs_batch = (xs_batch - self.theta_fiducial)/self.fisher_errors
+                self.ps = np.concatenate([self.ps, ps_batch])
+                self.xs = np.concatenate([self.xs, xs_batch])
+                self.n_sims += n_batch
+                self.x_train = self.ps.astype(np.float32)
+                self.y_train = self.xs.astype(np.float32)
+        
+                # Train the network on these initial simulations
+                history = self.mdn.fit(self.x_train, self.y_train,
+                                       batch_size=batch_size, \
+                                       epochs=epochs, verbose=1, \
+                                       validation_split=validation_split, \
+                                       callbacks=[kcb])
+                       
+                # Update the loss and validation loss
+                self.loss = np.concatenate([self.loss, history.history['loss']])
+                self.val_loss = np.concatenate([self.val_loss, history.history['val_loss']])
+                self.loss_trace.append(history.history['loss'][-1])
+                self.val_loss_trace.append(history.history['val_loss'][-1])
+                self.n_sim_trace.append(self.n_sims)
+
+                # Generate posterior samples
+                print('Sampling approximate posterior...')
+                self.posterior_samples = \
+                    self.emcee_sample(self.log_posterior, \
+                                      [self.posterior_samples[j] for j in range(self.nwalkers)], \
+                                      main_chain=self.posterior_chain_length)
+                print('Done.')
+
+                # If plot == True
+                if plot == True:
+                    self.triangle_plot([self.posterior_samples], \
+                                        savefig=True, \
+                                        filename='seq_train_post_{:d}.pdf'.format(i + 1))
+
+        # Train on master only
+        if self.rank == 0:
+
+            # Train the network over some more epochs
+            print('Final round of training with larger SGD batch size...')
+            self.mdn.fit(self.x_train, self.y_train, \
+                         batch_size=self.n_sims, epochs=300, \
+                         verbose=1, validation_split=0.1, \
+                         callbacks=[kcb])
+            print('Done.')
+
             print('Sampling approximate posterior...')
-            self.posterior_samples = self.emcee_sample(self.log_posterior, [self.posterior_samples[i] for i in range(self.nwalkers)], main_chain=self.posterior_chain_length)
+            self.posterior_samples = \
+                self.emcee_sample(self.log_posterior, \
+                                  [self.posterior_samples[-i,:] for i in range(self.nwalkers)], \
+                                  main_chain=self.posterior_chain_length)
             print('Done.')
 
-            # If plot == True
+            # if plot == True
             if plot == True:
-                self.triangle_plot([self.posterior_samples])
-
-        # Train the network over some more epochs
-        print('Final round of training with larger SGD batch size...')
-        self.mdn.fit(self.x_train, self.y_train,
-          batch_size=self.n_sims, epochs=300, verbose=1, validation_split=0.1, callbacks=[keras.callbacks.EarlyStopping(monitor='val_loss', min_delta=0, patience=20, verbose=0, mode='auto')])
-        print('Done.')
-
-        print('Sampling approximate posterior...')
-        self.posterior_samples = self.emcee_sample(self.log_posterior, [self.posterior_samples[-i,:] for i in range(self.nwalkers)], main_chain=self.posterior_chain_length)
-        print('Done.')
-
-        # if plot == True
-        if plot == True:
-            self.triangle_plot([self.posterior_samples])
+                self.triangle_plot([self.posterior_samples], \
+                                    savefig=True, \
+                                    filename='seq_train_post_final.pdf')
     
     def fisher_pretraining(self, n_batch, proposal, plot=True, batch_size=100, validation_split=0.1, epochs=100, patience=20):
 
-        # Generate fisher pre-training data
-        print("Generating pre-training data...")
+        # Train on master only
+        if self.rank == 0:
 
-        # Anticipated covariance of the re-scaled data
-        Cdd = np.zeros((self.npar, self.npar))
-        for i in range(self.npar):
-            for j in range(self.npar):
-                Cdd[i,j] = self.Finv[i,j]/(self.fisher_errors[i]*self.fisher_errors[j])
-        Ldd = np.linalg.cholesky(Cdd)
+            # Generate fisher pre-training data
+            print("Generating pre-training data...")
 
-        # Sample parameters from some broad proposal
-        ps = np.zeros((n_batch, self.npar))
-        for i in range(0, n_batch):
-            ps[i,:] = (proposal.draw() - self.theta_fiducial)/self.fisher_errors
+            # Anticipated covariance of the re-scaled data
+            Cdd = np.zeros((self.npar, self.npar))
+            for i in range(self.npar):
+                for j in range(self.npar):
+                    Cdd[i,j] = self.Finv[i,j]/(self.fisher_errors[i]*self.fisher_errors[j])
+            Ldd = np.linalg.cholesky(Cdd)
 
-        # Sample data assuming a Gaussian likelihood
-        xs = np.array([pss + np.dot(Ldd, np.random.normal(0, 1, self.npar)) for pss in ps])
+            # Sample parameters from some broad proposal
+            ps = np.zeros((n_batch, self.npar))
+            for i in range(0, n_batch):
+                ps[i,:] = (proposal.draw() - self.theta_fiducial)/self.fisher_errors
 
-        # Construct the initial training-set
-        self.x_train = ps.astype(np.float32).reshape((n_batch, self.npar))
-        self.y_train = xs.astype(np.float32).reshape((n_batch, self.npar))
+            # Sample data assuming a Gaussian likelihood
+            xs = np.array([pss + np.dot(Ldd, np.random.normal(0, 1, self.npar)) for pss in ps])
 
-        # Train network on initial (asymptotic) simulations
-        print("Training on the pre-training data...")
-        history = self.mdn.fit(self.x_train, self.y_train,
-          batch_size=batch_size, epochs=epochs, verbose=1, validation_split=validation_split, callbacks=[keras.callbacks.EarlyStopping(monitor='val_loss', min_delta=0, patience=patience, verbose=0, mode='auto')])
-        print("Done.")
-        
-        # Initialization for the EMCEE sampling
-        x0 = [self.posterior_samples[-i,:] for i in range(self.nwalkers)]
+            # Construct the initial training-set
+            self.x_train = ps.astype(np.float32).reshape((n_batch, self.npar))
+            self.y_train = xs.astype(np.float32).reshape((n_batch, self.npar))
 
-        print('Sampling approximate posterior...')
-        self.posterior_samples = self.emcee_sample(self.log_posterior, x0, main_chain=self.posterior_chain_length)
-        print('Done.')
+            # Train network on initial (asymptotic) simulations
+            print("Training on the pre-training data...")
+            history = self.mdn.fit(self.x_train, self.y_train,
+              batch_size=batch_size, epochs=epochs, verbose=1, validation_split=validation_split, callbacks=[keras.callbacks.EarlyStopping(monitor='val_loss', min_delta=0, patience=patience, verbose=0, mode='auto')])
+            print("Done.")
+            
+            # Initialization for the EMCEE sampling
+            x0 = [self.posterior_samples[-i,:] for i in range(self.nwalkers)]
 
-        # if plot == True
-        if plot == True:
-            self.triangle_plot([self.posterior_samples])
+            print('Sampling approximate posterior...')
+            self.posterior_samples = self.emcee_sample(self.log_posterior, x0, main_chain=self.posterior_chain_length)
+            print('Done.')
 
-        # Update the loss (as a function of the number of simulations) and number of simulations ran (zero so far)
-        self.loss_trace.append(history.history['loss'][-1])
-        self.val_loss_trace.append(history.history['val_loss'][-1])
-        self.n_sim_trace.append(0)
+            # if plot == True
+            if plot == True:
+                self.triangle_plot([self.posterior_samples], \
+                                    savefig=True, \
+                                    filename='fish_pretrain_post.pdf')
+
+            # Update the loss (as a function of the number of simulations) and number of simulations ran (zero so far)
+            self.loss_trace.append(history.history['loss'][-1])
+            self.val_loss_trace.append(history.history['val_loss'][-1])
+            self.n_sim_trace.append(0)
 
     def triangle_plot(self, samples, savefig = False, filename = None):
 
@@ -322,7 +445,11 @@ class DelfiMixtureDensityNetwork():
         plt.tight_layout()
         plt.subplots_adjust(hspace=0, wspace=0)
         
-        if savefig == True:
+        if savefig:
+            print('Saving ' + filename)
             plt.savefig(filename)
-        plt.show()
+        if self.show_plot:
+            plt.show()
+        else:
+            plt.close()
 
