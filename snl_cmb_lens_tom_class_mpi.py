@@ -179,6 +179,10 @@ def fisher_matrix(l_min, l_max, n_fields, c_l_fid, dc_l_dpar_fid, n_l_gg, n_l_pp
     return np.linalg.inv(f_mat), sc_mat_1, sc_mat_2
 
 def compressed_sim(pars, args):
+
+    ## fun tests
+    #if np.all(pars == theta_fiducial*1.01):
+    #    return np.ones(len(pars)) * np.nan
     
     # parse settings and generate C_ls
     n_pars = len(pars)
@@ -369,7 +373,7 @@ f_mat_inv, sc_mat_1, sc_mat_2 = fisher_matrix(l_min, l_max, n_fields, c_l_fid, d
 sim_args = [l_min, l_max, n_fields, cosmo, theta_fiducial, f_mat_inv, c_l_fid, n_l_gg, n_l_pp, sc_mat_1, sc_mat_2]
 
 # Define the simulator function: takes parameters, spits out simulated (compressed) summaries
-simulator = lambda x: compressed_sim(x, sim_args)
+simulator = lambda x, sim_args: compressed_sim(x, sim_args)
 
 # The data vector: import or otherwise simulate for testing
 data = compressed_sim(theta_fiducial, sim_args)
@@ -398,7 +402,8 @@ n_components = 1
 mdn = nde.DelfiMixtureDensityNetwork(simulator, prior, \
                                      asymptotic_posterior, f_mat_inv, \
                                      theta_fiducial, data, \
-                                     n_components, n_hidden = [50, 50], \
+                                     n_components, simulator_args = sim_args, \
+                                     n_hidden = [50, 50], \
                                      activations = ['tanh', 'tanh'], \
                                      names = names, labels = labels, \
                                      ranges = ranges, rank = rank, \
@@ -413,6 +418,23 @@ mdn.fisher_pretraining(50000, prior, epochs=10)
 # Proposal for the SNL
 proposal = priors.TruncatedGaussian(theta_fiducial, 9*f_mat_inv, lower, upper)
 
+'''
+# Tests of MPI capability and error checking
+print 'random check', rank, npr.randn(5)
+props = -np.ones((10, len(theta_fiducial)))
+props[1, :] = theta_fiducial[:]
+props[3, :] = theta_fiducial[:]
+props[5, :] = theta_fiducial[:]*1.01
+props[7, :] = theta_fiducial[:]
+print rank, props
+mdn.inds_prop = mdn.allocate_jobs(5 * 2)
+mdn.inds_acpt = mdn.allocate_jobs(2)
+omg, zomg = mdn.run_simulation_batch(2, props)
+print rank, 'data samples:', omg
+print rank, 'param samples:', zomg
+exit()
+'''
+
 # Initial samples, batch size for population samples, number of populations
 n_initial = 50#500
 n_batch = 50#500
@@ -422,10 +444,11 @@ n_populations = 8
 mdn.sequential_training(n_initial, n_batch, n_populations, proposal)
 
 # Trace plot of the loss as a function of the number of simulations
-plt.scatter(mdn.n_sim_trace, mdn.loss_trace, s = 20)
-plt.plot(mdn.n_sim_trace, mdn.loss_trace, color = 'red')
-plt.xlim(0, mdn.n_sim_trace[-1])
-plt.xlabel('number of simulations')
-plt.ylabel('loss')
-plt.show()
+if rank == 0:
+    plt.scatter(mdn.n_sim_trace, mdn.loss_trace, s = 20)
+    plt.plot(mdn.n_sim_trace, mdn.loss_trace, color = 'red')
+    plt.xlim(0, mdn.n_sim_trace[-1])
+    plt.xlabel('number of simulations')
+    plt.ylabel('loss')
+    plt.show()
 

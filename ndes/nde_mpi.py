@@ -156,7 +156,7 @@ class DelfiMixtureDensityNetwork():
         # (when simulator returns np.nan).
         i_prop = self.inds_prop[0]
         i_acpt = self.inds_acpt[0]
-        err_msg = 'Simulator returns {:s} for parameter values: {}'
+        err_msg = 'Simulator returns {:s} for parameter values: {} (rank {:d})'
         while i_acpt <= self.inds_acpt[-1]:
             try:
                 sim = self.simulator(ps[i_prop,:], self.simulator_args)
@@ -165,9 +165,9 @@ class DelfiMixtureDensityNetwork():
                     parameter_samples[i_acpt,:] = ps[i_prop,:]
                     i_acpt += 1
                 else:
-                    print(err_msg.format('NaN/inf', ps[i_prop,:]))
+                    print(err_msg.format('NaN/inf', ps[i_prop,:], self.rank))
             except:
-                print(err_msg.format('exception', ps[i_prop,:]))
+                print(err_msg.format('exception', ps[i_prop,:], self.rank))
             i_prop += 1
 
         # Reduce results from all processes and return
@@ -297,7 +297,7 @@ class DelfiMixtureDensityNetwork():
                 print('Done.')
 
             else:
-                ps_batch = np.zeros((n_batch, self.npar))
+                ps_batch = np.zeros((safety * n_batch, self.npar))
             if self.use_mpi:
                 self.comm.Bcast(ps_batch, root=0)
 
