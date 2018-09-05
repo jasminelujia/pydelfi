@@ -8,13 +8,14 @@ import getdist
 from getdist import plots, MCSamples
 import emcee
 import matplotlib.pyplot as plt
+#from tqdm import tnrange
 
 class DelfiMixtureDensityNetwork():
 
     def __init__(self, simulator, prior, asymptotic_posterior, \
                  Finv, theta_fiducial, data, n_components, \
                  simulator_args = None, n_hidden = [50, 50], \
-                 activations = ['tanh', 'tanh'], names=None, \
+                 activations = ["tanh", "tanh"], names=None, \
                  labels=None, ranges=None, nwalkers=100, \
                  posterior_chain_length=1000, proposal_chain_length=100, \
                  rank=0, n_procs=1, comm=None, red_op=None, \
@@ -35,8 +36,41 @@ class DelfiMixtureDensityNetwork():
         self.N = int((self.D + self.D * (self.D + 1) / 2 + 1)*self.M)
 
         # Constant used in loss function
-        #self.sq2piD = np.sqrt(2 * np.pi)**self.D
         self.Dlog2pio2 = self.D*np.log(2. * np.pi) / 2.
+        self.ϕ = 0#1e19
+        self. ϵ = 1e-30
+
+        ## Build TensorFlow model
+        ##tf.reset_default_graph()
+        #self.parameter = tf.placeholder(tf.float32, shape = (None, self.D), name = "parameters")
+        #self.true = tf.placeholder(tf.float32, shape = (None, self.D), name = "true")
+        #self.layers = [self.parameter]
+        #self.weights = []
+        #self.biases = []
+        #for i in range(len(self.n_hidden)):
+        #    with tf.variable_scope('layer_' + str(i + 1)):
+        #        if i == 0:
+        #            self.weights.append(tf.get_variable("weights", [self.D, self.n_hidden[i]], initializer = tf.random_normal_initializer(0., 1.)))
+        #            self.biases.append(tf.get_variable("biases", [self.n_hidden[i]], initializer = tf.constant_initializer(0.1)))
+        #        elif i == len(self.n_hidden) - 1:
+        #            self.weights.append(tf.get_variable("weights", [self.n_hidden[i], self.N], initializer = tf.random_normal_initializer(0., 1.)))
+        #            self.biases.append(tf.get_variable("biases", [self.N], initializer = tf.constant_initializer(0.1)))
+        #        else:
+        #            self.weights.append(tf.get_variable("weights", [self.n_hidden[i], self.n_hidden[i + 1]], initializer = tf.random_normal_initializer(0., 1.)))
+        #            self.biases.append(tf.get_variable("biases", [self.n_hidden[i + 1]], initializer = tf.constant_initializer(0.1)))
+        #    if i < len(self.n_hidden) - 1:
+        #        self.layers.append(self.activations[i](tf.add(tf.matmul(self.layers[-1], self.weights[-1]), self.biases[-1])))
+        #    else:
+        #        self.layers.append(tf.add(tf.matmul(self.layers[-1], self.weights[-1]), self.biases[-1]))
+        #self.μ, self.Σ, self.α, self.det = self.mapping(self.layers[-1])
+        #self.diff = tf.expand_dims(self.true, 1) - self.μ
+        #calc_loss = tf.exp(-0.5 * tf.einsum("ijlk,ijk->ij", self.Σ, tf.square(self.diff)) + tf.log(self.α) + tf.log(self.det) - self.Dlog2pio2)
+        #calc_loss = tf.where(tf.is_nan(calc_loss), tf.zeros_like(calc_loss), calc_loss)
+        #self.loss = -tf.reduce_mean(tf.log(tf.reduce_sum(tf.where(tf.is_inf(calc_loss), tf.zeros_like(calc_loss), calc_loss), 1) + 1e-19))
+        #self.train = tf.train.AdamOptimizer(0.01).minimize(self.loss)
+        #self.sess = tf.Session()
+        #self.sess.run(tf.global_variables_initializer())
+
 
         # Initialize the sequential Keras model
         self.mdn = Sequential()
@@ -47,7 +81,6 @@ class DelfiMixtureDensityNetwork():
 
         # Linear output layer
         self.mdn.add(Dense(self.N, activation='linear'))
-        #self.μ, self.Σ, self.α = self.mapping(self.mdn.layers[-1].output)
 
         # Compile the Keras model
         self.mdn.summary()
@@ -207,13 +240,16 @@ class DelfiMixtureDensityNetwork():
 
         # Calculate likelihood
         diff = (self.data - self.theta_fiducial)/self.fisher_errors-μ
-        like = np.sum(-0.5 *np.einsum("ijk,ik->i", Σ, diff**2.) + np.log(α) + np.log(det) - self.Dlog2pio2)
+        like = np.exp(-0.5 *np.einsum("ikj,ik->i", Σ, diff**2.) + np.log(α) + np.log(det) - self.Dlog2pio2)
+        like[np.isnan(like)] = 0
+        like[np.isinf(like)] = self.ϕ
+        like = np.sum(like)
         #like = np.sum(α * np.exp(-0.5*np.einsum("ijk,ik->i", Σ, diff**2.)) * det / np.sqrt((2 * np.pi) ** self.D))
 
-        if np.isnan(like) == True:
+        if np.isnan(np.log(like)) == True:
             return -1e300
         else:
-            return like
+            return np.log(like)
 
     def sequential_training(self, n_initial, n_batch, n_populations, proposal, \
                             safety = 5, plot = True, batch_size=100, \
@@ -400,6 +436,9 @@ class DelfiMixtureDensityNetwork():
             ps = np.zeros((n_batch, self.npar))
             for i in range(0, n_batch):
                 ps[i,:] = (proposal.draw() - self.theta_fiducial)/self.fisher_errors
+            #ps = np.zeros((n_batch + int(validation_split * n_batch), self.npar))
+            #for i in range(0, n_batch + int(validation_split * n_batch)):
+            #    ps[i,:] = (proposal.draw() - self.theta_fiducial)/self.fisher_errors
 
             # Sample data assuming a Gaussian likelihood
             xs = np.array([pss + np.dot(Ldd, np.random.normal(0, 1, self.npar)) for pss in ps])
@@ -407,9 +446,20 @@ class DelfiMixtureDensityNetwork():
             # Construct the initial training-set
             self.x_train = ps.astype(np.float32).reshape((n_batch, self.npar))
             self.y_train = xs.astype(np.float32).reshape((n_batch, self.npar))
+            #self.x_train = ps[:n_batch].astype(np.float32).reshape((n_batch // batch_size, batch_size, self.npar))
+            #self.y_train = xs[:n_batch].astype(np.float32).reshape((n_batch // batch_size, batch_size, self.npar))
+            #self.x_test = ps[n_batch:].astype(np.float32).reshape((int(n_batch*(validation_split)) // batch_size, batch_size, self.npar))
+            #self.y_test = xs[n_batch:].astype(np.float32).reshape((int(n_batch*(validation_split)) // batch_size, batch_size, self.npar))
 
             # Train network on initial (asymptotic) simulations
             print("Training on the pre-training data...")
+            #tr_epoch = tnrange(epochs, desc = "Epochs")
+            #for epoch in tr_epoch:
+            #    tr_batch = tnrange(1)#tnrange(n_batch // batch_size, desc = "Batches")
+            #    for batch in tr_batch:
+            #        _, loss = self.sess.run([self.train, self.loss], feed_dict = {self.parameter: self.x_train[batch], self.true: self.y_train[batch]})
+            #        tr_batch.set_postfix(loss=loss)
+
             history = self.mdn.fit(self.x_train, self.y_train,
               batch_size=batch_size, epochs=epochs, verbose=1, validation_split=validation_split, callbacks=[keras.callbacks.EarlyStopping(monitor='val_loss', min_delta=0, patience=patience, verbose=0, mode='auto')])
             print("Done.")
@@ -463,7 +513,6 @@ class DelfiMixtureDensityNetwork():
     # Build lower triangular from network output (also calculate determinant)
     def covariance_matrix(self, σ, use_tf = True):
         Σ = []
-        det = 1
         start = 0
         end = 1
         for i in range(self.D):
@@ -471,13 +520,14 @@ class DelfiMixtureDensityNetwork():
                 exp_val = tf.exp(σ[:, :, end-1])
             else:
                 exp_val = np.exp(σ[:, :, end-1])
-            det *= exp_val
             if i > 0:
+                det *= exp_val
                 if use_tf:
                     Σ.append(tf.pad(tf.concat([σ[:, :, start:end-1], tf.expand_dims(exp_val, -1)], -1), [[0, 0], [0, 0], [0, self.D-i-1]]))
                 else:
                     Σ.append(np.pad(np.concatenate([σ[:, :, start:end-1], exp_val[:, :, np.newaxis]], -1), [[0, 0], [0, 0], [0, self.D-i-1]], "constant"))
             else:
+                det = exp_val
                 if use_tf:
                     Σ.append(tf.pad(tf.expand_dims(exp_val, -1), [[0, 0], [0, 0], [0, self.D-i-1]]))
                 else:
@@ -503,7 +553,9 @@ class DelfiMixtureDensityNetwork():
     def neg_log_normal_mixture_likelihood(self, true, parameters):
         μ, Σ, α, det = self.mapping(parameters)
         diff = tf.expand_dims(true, 1) - μ
-        return tf.reduce_mean(tf.reduce_sum(0.5 * tf.einsum("ijkl,ijk->ij", Σ, tf.square(diff)) - tf.log(α) - tf.log(det) + self.Dlog2pio2, 1))
+        calc_loss = tf.exp(-0.5 * tf.einsum("ijlk,ijk->ij", Σ, tf.square(diff)) + tf.log(α) + tf.log(det) - self.Dlog2pio2)
+        calc_loss = tf.where(tf.is_nan(calc_loss), tf.zeros_like(calc_loss), calc_loss)
+        return -tf.reduce_mean(tf.log(tf.reduce_sum(tf.where(tf.is_inf(calc_loss), tf.ones_like(calc_loss) * self.ϕ, calc_loss), 1) + self.ϵ))
 
     def log_sum_exp(self, x, axis=None):
         x_max = tf.reduce_max(x, axis=axis, keepdims=True)
