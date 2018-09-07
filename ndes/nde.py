@@ -40,49 +40,7 @@ class DelfiMixtureDensityNetwork():
         #self.ϕ = 0.
 
         # Build TensorFlow model
-        tf.reset_default_graph()
-        self.parameter = tf.placeholder(tf.float32, shape = (None, self.D), name = "parameters")
-        self.true = tf.placeholder(tf.float32, shape = (None, self.D), name = "true")
-        self.ϵ = tf.placeholder(tf.float32, shape = (), name = "epsilon_")
-        self.layers = [self.parameter]
-        self.weights = []
-        self.biases = []
-        for i in range(len(self.n_hidden)):
-            with tf.variable_scope('layer_' + str(i + 1)):
-                if i == 0:
-                    self.weights.append(tf.get_variable("weights", [self.D, self.n_hidden[i]], initializer = tf.random_normal_initializer(0., np.sqrt(2./self.D))))
-                    self.biases.append(tf.get_variable("biases", [self.n_hidden[i]], initializer = tf.constant_initializer(0.0)))
-                elif i == len(self.n_hidden) - 1:
-                    self.weights.append(tf.get_variable("weights", [self.n_hidden[i], self.N], initializer = tf.random_normal_initializer(0., np.sqrt(2./self.n_hidden[i]))))
-                    self.biases.append(tf.get_variable("biases", [self.N], initializer = tf.constant_initializer(0.0)))
-                else:
-                    self.weights.append(tf.get_variable("weights", [self.n_hidden[i], self.n_hidden[i + 1]], initializer = tf.random_normal_initializer(0., np.sqrt(2/self.n_hidden[i]))))
-                    self.biases.append(tf.get_variable("biases", [self.n_hidden[i + 1]], initializer = tf.constant_initializer(0.0)))
-            if i < len(self.n_hidden) - 1:
-                self.layers.append(self.activations[i](tf.add(tf.matmul(self.layers[-1], self.weights[-1]), self.biases[-1])))
-            else:
-                self.layers.append(tf.add(tf.matmul(self.layers[-1], self.weights[-1]), self.biases[-1]))
-        self.μ, self.Σ, self.α, self.det = self.mapping(self.layers[-1])
-        self.like = tf.reduce_sum(tf.exp(-0.5*tf.reduce_sum(tf.square(tf.einsum("ijlk,ijk->ijl", self.Σ, tf.subtract(tf.expand_dims(self.true, 1), self.μ))), 2) + tf.log(self.α) + tf.log(self.det) - self.Dlog2pio2), 1)
-        self.loss = -tf.reduce_mean(tf.log(self.like + self.ϵ))
-        self.train = tf.train.AdamOptimizer(0.0001).minimize(self.loss)
-        self.sess = tf.Session()
-        self.sess.run(tf.global_variables_initializer())
-
-        ## Initialize the sequential Keras model
-        #self.mdn = Sequential()
-        #
-        ## Add the (dense) hidden layers
-        #for i in range(len(self.n_hidden)):
-        #    self.mdn.add(Dense(self.n_hidden[i], activation=self.activations[i], input_shape=(self.D,)))
-        #
-        ## Linear output layer
-        #self.mdn.add(Dense(self.N, activation='linear'))
-        #
-        ## Compile the Keras model
-        #self.mdn.summary()
-        #self.mdn.compile(loss=self.neg_log_normal_mixture_likelihood,
-        #                 optimizer='adam')
+        self.build_network()
 
         # Prior and asymptotic posterior
         self.prior = prior
@@ -91,8 +49,6 @@ class DelfiMixtureDensityNetwork():
         # Training data
         self.ps = []
         self.xs = []
-        #self.x_train = []
-        #self.y_train = []
         self.n_sims = 0
 
         # MCMC chain parameters
@@ -123,11 +79,11 @@ class DelfiMixtureDensityNetwork():
         self.show_plot = show_plot
 
         # Training loss, validation loss
-        #self.loss = []
-        #self.val_loss = []
-        #self.loss_trace = []
-        #self.val_loss_trace = []
-        #self.n_sim_trace = []
+        self.loss = []
+        self.val_loss = []
+        self.loss_trace = []
+        self.val_loss_trace = []
+        self.n_sim_trace = []
 
         # MPI-specific setup
         self.rank = rank
@@ -192,7 +148,7 @@ class DelfiMixtureDensityNetwork():
         i_prop = self.inds_prop[0]
         i_acpt = self.inds_acpt[0]
         err_msg = 'Simulator returns {:s} for parameter values: {} (rank {:d})'
-        while i_acpt <= self.inds_acpt[-1] and i_prop <= self.inds_prop[-1]:
+        while i_acpt <= self.inds_acpt[-1]:
             try:
                 sim = self.simulator(ps[i_prop,:], self.simulator_args)
                 if np.all(np.isfinite(sim.flatten())):
@@ -228,11 +184,11 @@ class DelfiMixtureDensityNetwork():
     # MDN log likelihood
     def log_likelihood(self, theta):
         # Predict means, covariances and weights given data
-        like = self.sess.run(self.like, feed_dict = {self.parameter: theta.astype(np.float32).reshape((1, self.D)), self.true: ((self.data - self.theta_fiducial)/self.fisher_errors).astype(np.float32).reshape((1, self.D))})
-        if np.isnan(np.mean(np.log(like))):
-            return 1e-300
+        like = self.sess.run(self.like, feed_dict = {self.parameter: theta.astype(np.float32).reshape((1, self.D)), self.true: ((self.data - self.theta_fiducial)/self.fisher_errors).astype(np.float32).reshape((1, self.D))})[0]
+        if np.isnan(np.log(like)) or np.isinf(np.log(like)):
+            return 1e-50
         else:
-            return np.mean(np.log(like))
+            return np.log(like)
 
     def sequential_training(self, n_initial, n_batch, n_populations, proposal, \
                             safety = 5, plot = True, batch_size=100, \
@@ -266,28 +222,17 @@ class DelfiMixtureDensityNetwork():
             # Construct the initial training-set
             self.ps = (self.ps - self.theta_fiducial)/self.fisher_errors
             self.xs = (self.xs - self.theta_fiducial)/self.fisher_errors
-            #self.x_train = self.ps.astype(np.float32)
-            #self.y_train = self.xs.astype(np.float32)
             self.n_sims = len(self.xs)
 
             ## Train the network on these initial simulations
-            self.training(self.ps, self.xs, batch_size = batch_size, validation_split = validation_split, epochs = epochs, epsilon = epsilon)
-            #kcb = keras.callbacks.EarlyStopping(monitor='val_loss', \
-            #                                    min_delta=0, \
-            #                                    patience=patience, \
-            #                                    verbose=0, mode='auto')
-            #history = self.mdn.fit(self.x_train, self.y_train, \
-            #                       batch_size=batch_size, \
-            #                       epochs=epochs, verbose=1, \
-            #                       validation_split=validation_split, \
-            #                       callbacks=[kcb])
+            history = self.training(self.ps, self.xs, batch_size = batch_size, validation_split = validation_split, epochs = epochs, epsilon = epsilon)
 
             ## Update the loss and validation loss
-            #self.loss = history.history['loss']
-            #self.val_loss = history.history['val_loss']
-            #self.loss_trace.append(history.history['loss'][-1])
-            #self.val_loss_trace.append(history.history['val_loss'][-1])
-            #self.n_sim_trace.append(self.n_sims)
+            self.loss = history["loss"]
+            self.val_loss = history["val_loss"]
+            self.loss_trace.append(history["loss"][-1])
+            self.val_loss_trace.append(history["val_loss"][-1])
+            self.n_sim_trace.append(self.n_sims)
 
             # Generate posterior samples
             print('Sampling approximate posterior...')
@@ -347,23 +292,14 @@ class DelfiMixtureDensityNetwork():
                 self.xs = np.concatenate([self.xs, xs_batch])
                 self.n_sims += n_batch
 
-                self.training(ps_batch, xs_batch, batch_size = batch_size, validation_split = validation_split, epochs = epochs, epsilon = epsilon)
-                #self.x_train = self.ps.astype(np.float32)
-                #self.y_train = self.xs.astype(np.float32)
+                history = self.training(self.ps, self.xs, batch_size = batch_size, validation_split = validation_split, epochs = epochs, epsilon = epsilon)
 
-                ## Train the network on these initial simulations
-                #history = self.mdn.fit(self.x_train, self.y_train,
-                #                       batch_size=batch_size, \
-                #                       epochs=epochs, verbose=1, \
-                #                       validation_split=validation_split, \
-                #                       callbacks=[kcb])
-
-                ## Update the loss and validation loss
-                #self.loss = np.concatenate([self.loss, history.history['loss']])
-                #self.val_loss = np.concatenate([self.val_loss, history.history['val_loss']])
-                #self.loss_trace.append(history.history['loss'][-1])
-                #self.val_loss_trace.append(history.history['val_loss'][-1])
-                #self.n_sim_trace.append(self.n_sims)
+                # Update the loss and validation loss
+                self.loss = np.concatenate([self.loss, history['loss']])
+                self.val_loss = np.concatenate([self.val_loss, history['val_loss']])
+                self.loss_trace.append(history['loss'][-1])
+                self.val_loss_trace.append(history['val_loss'][-1])
+                self.n_sim_trace.append(self.n_sims)
 
                 # Generate posterior samples
                 print('Sampling approximate posterior...')
@@ -385,10 +321,6 @@ class DelfiMixtureDensityNetwork():
             ## Train the network over some more epochs
             print('Final round of training with larger SGD batch size...')
             self.training(self.ps, self.xs, batch_size = self.n_sims, validation_split = 0.1, epochs = 300, epsilon = epsilon)
-            #self.mdn.fit(self.x_train, self.y_train, \
-            #             batch_size=self.n_sims, epochs=300, \
-            #             verbose=1, validation_split=0.1, \
-            #             callbacks=[kcb])
             print('Done.')
 
             print('Sampling approximate posterior...')
@@ -427,7 +359,7 @@ class DelfiMixtureDensityNetwork():
             xs = np.array([pss + np.dot(Ldd, np.random.normal(0, 1, self.npar)) for pss in ps])
             # Train network on initial (asymptotic) simulations
             print("Training on the pre-training data...")
-            self.training(ps, xs, batch_size = batch_size, validation_split = validation_split, epochs = epochs, epsilon = epsilon)
+            history = self.training(ps, xs, batch_size = batch_size, validation_split = validation_split, epochs = epochs, epsilon = epsilon)
             print("Done.")
 
             # Initialization for the EMCEE sampling
@@ -444,9 +376,9 @@ class DelfiMixtureDensityNetwork():
                                     filename='fish_pretrain_post.pdf')
 
             # Update the loss (as a function of the number of simulations) and number of simulations ran (zero so far)
-            #self.loss_trace.append(history.history['loss'][-1])
-            #self.val_loss_trace.append(history.history['val_loss'][-1])
-            #self.n_sim_trace.append(0)
+            self.loss_trace.append(history['loss'][-1])
+            self.val_loss_trace.append(history['val_loss'][-1])
+            self.n_sim_trace.append(0)
 
     def triangle_plot(self, samples, savefig = False, filename = None):
 
@@ -477,32 +409,69 @@ class DelfiMixtureDensityNetwork():
             plt.close()
 
     def training(self, input, true, batch_size=100, validation_split=0.1, epochs=100, epsilon = 1e-37):
+        history = {"loss":[], "val_loss":[]}
         n_batch = input.shape[0]
         training_indices = np.arange(int(n_batch * (1 - validation_split)))
+        training_batch_num = int(n_batch * (1 - validation_split)) // batch_size
+        if training_batch_num * batch_size < len(training_indices):
+            add_extra_training = True
+        else:
+            add_extra_training = False
         test_indices = np.arange(int(n_batch * (1 - validation_split)), n_batch)
+        if len(test_indices) == 0:
+            validation = False
+        else:
+            validation = True
+            test_batch_num = len(test_indices) // batch_size
+            if test_batch_num * batch_size < len(test_indices):
+                add_extra_test = True
+            else:
+                add_extra_test = False
         tr_epoch = tnrange(epochs, desc = "Epochs")
         for epoch in tr_epoch:
             np.random.shuffle(training_indices)
-            these_indices = training_indices[:int(n_batch * (1 - validation_split)) // batch_size * batch_size]
-            self.x_train = input[these_indices].astype(np.float32).reshape((int(n_batch * (1 - validation_split)) // batch_size, batch_size, self.npar))
-            self.y_train = true[these_indices].astype(np.float32).reshape((int(n_batch * (1 - validation_split)) // batch_size, batch_size, self.npar))
-            tr_batch = tnrange(int(n_batch * (1 - validation_split)) // batch_size, desc = "Batches")
+            these_indices = training_indices[:training_batch_num * batch_size]
+            x_train = input[these_indices].astype(np.float32).reshape((training_batch_num, batch_size, self.npar))
+            y_train = true[these_indices].astype(np.float32).reshape((training_batch_num, batch_size, self.npar))
+            if add_extra_training:
+                num_training_batch = training_batch_num + 1
+            else:
+                num_training_batch = training_batch_num
+            tr_batch = tnrange(num_training_batch, desc = "Batches")
             for batch in tr_batch:
-                _, loss = self.sess.run([self.train, self.loss], feed_dict = {self.parameter: self.x_train[batch], self.true: self.y_train[batch], self.ϵ:epsilon})
-                if batch == int(n_batch * (1 - validation_split)) // batch_size - 1:
-                    test_loss = []
-                    for test_batch in range(int(n_batch * validation_split) // batch_size):
-                        np.random.shuffle(test_indices)
-                        these_test_indices = test_indices[:int(n_batch * validation_split) // batch_size * batch_size]
-                        self.x_test = input[these_test_indices].astype(np.float32).reshape((int(n_batch * validation_split) // batch_size, batch_size, self.npar))
-                        self.y_test = true[these_test_indices].astype(np.float32).reshape((int(n_batch * validation_split) // batch_size, batch_size, self.npar))
-                        test_loss.append(self.sess.run(self.loss, feed_dict = {self.parameter: self.x_test[test_batch], self.true: self.y_test[test_batch], self.ϵ:epsilon}))
-                    tr_batch.set_postfix(loss=loss, val_loss=np.mean(test_loss))
+                if batch == training_batch_num:
+                    _, loss = self.sess.run([self.train, self.neg_log_normal_mixture_likelihood], feed_dict = {self.parameter: input[training_indices[training_batch_num * batch_size:]].astype(np.float32).reshape((len(training_indices[training_batch_num * batch_size:]), self.npar)), self.true: true[training_indices[training_batch_num * batch_size:]].astype(np.float32).reshape((len(training_indices[training_batch_num * batch_size:]), self.npar)), self.ϵ:epsilon})
                 else:
-                    tr_batch.set_postfix(loss=loss, val_loss=0)
+                    _, loss = self.sess.run([self.train, self.neg_log_normal_mixture_likelihood], feed_dict = {self.parameter: x_train[batch], self.true: y_train[batch], self.ϵ:epsilon})
+                if batch == num_training_batch - 1:
+                    if validation:
+                        val_loss = []
+                        if add_extra_test:
+                            num_test_batch = test_batch_num + 1
+                        else:
+                            num_test_batch = test_batch_num
+                        for test_batch in range(num_test_batch):
+                            np.random.shuffle(test_indices)
+                            these_test_indices = test_indices[:test_batch_num * batch_size]
+                            x_test = input[these_test_indices].astype(np.float32).reshape((test_batch_num, batch_size, self.npar))
+                            y_test = true[these_test_indices].astype(np.float32).reshape((test_batch_num, batch_size, self.npar))
+                            if test_batch == test_batch_num:
+                                val_loss.append(self.sess.run(self.neg_log_normal_mixture_likelihood, feed_dict = {self.parameter: input[test_indices[test_batch_num * batch_size:]].astype(np.float32).reshape((len(test_indices[test_batch_num * batch_size:]), self.npar)), self.true: true[test_indices[test_batch_num * batch_size:]].astype(np.float32).reshape((len(test_indices[test_batch_num * batch_size:]), self.npar)), self.ϵ:epsilon}))
+                            else:
+                                val_loss.append(self.sess.run(self.neg_log_normal_mixture_likelihood, feed_dict = {self.parameter: x_test[test_batch], self.true: y_test[test_batch], self.ϵ:epsilon}))
+                    else:
+                        val_loss = np.nan
+                    tr_batch.set_postfix(loss=loss, val_loss=np.mean(val_loss))
+                else:
+                    tr_batch.set_postfix(loss=loss)
+            history["loss"].append(loss)
+            history["val_loss"].append(np.mean(val_loss))
+        history["loss"] = np.array(history["loss"])
+        history["val_loss"] = np.array(history["val_loss"])
+        return history
 
     # Build lower triangular from network output (also calculate determinant)
-    def covariance_matrix(self, σ):
+    def lower_triangular_matrix(self, σ):
         Σ = []
         det = []
         start = 0
@@ -524,10 +493,41 @@ class DelfiMixtureDensityNetwork():
     def mapping(self, parameters):
         μ, Σ, α = tf.split(parameters, [self.M * self.D, self.M * self.D * (self.D + 1) // 2, self.M], 1)
         μ = tf.reshape(μ, (-1, self.M, self.D))
-        Σ, det = self.covariance_matrix(tf.reshape(Σ, (-1, self.M, self.D * (self.D + 1) // 2)))
+        Σ, det = self.lower_triangular_matrix(tf.reshape(Σ, (-1, self.M, self.D * (self.D + 1) // 2)))
         α = tf.nn.softmax(α)
         return μ, Σ, α, det
 
     def log_sum_exp(self, x, axis=None):
         x_max = tf.reduce_max(x, axis=axis, keepdims=True)
         return tf.log(tf.reduce_sum(tf.exp(x - x_max), axis=axis, keepdims=True)) + x_max
+
+    def build_network(self):
+        tf.reset_default_graph()
+        with tf.variable_scope("MDN") as scope:
+            self.parameter = tf.placeholder(tf.float32, shape = (None, self.D), name = "parameters")
+            self.true = tf.placeholder(tf.float32, shape = (None, self.D), name = "true")
+            self.ϵ = tf.placeholder(tf.float32, shape = (), name = "epsilon_")
+            self.layers = [self.parameter]
+            self.weights = []
+            self.biases = []
+            for i in range(len(self.n_hidden)):
+                with tf.variable_scope('layer_' + str(i + 1)):
+                    if i == 0:
+                        self.weights.append(tf.get_variable("weights", [self.D, self.n_hidden[i]], initializer = tf.random_normal_initializer(0., np.sqrt(2./self.D))))
+                        self.biases.append(tf.get_variable("biases", [self.n_hidden[i]], initializer = tf.constant_initializer(0.0)))
+                    elif i == len(self.n_hidden) - 1:
+                        self.weights.append(tf.get_variable("weights", [self.n_hidden[i], self.N], initializer = tf.random_normal_initializer(0., np.sqrt(2./self.n_hidden[i]))))
+                        self.biases.append(tf.get_variable("biases", [self.N], initializer = tf.constant_initializer(0.0)))
+                    else:
+                        self.weights.append(tf.get_variable("weights", [self.n_hidden[i], self.n_hidden[i + 1]], initializer = tf.random_normal_initializer(0., np.sqrt(2/self.n_hidden[i]))))
+                        self.biases.append(tf.get_variable("biases", [self.n_hidden[i + 1]], initializer = tf.constant_initializer(0.0)))
+                if i < len(self.n_hidden) - 1:
+                    self.layers.append(self.activations[i](tf.add(tf.matmul(self.layers[-1], self.weights[-1]), self.biases[-1])))
+                else:
+                    self.layers.append(tf.add(tf.matmul(self.layers[-1], self.weights[-1]), self.biases[-1]))
+            self.μ, self.Σ, self.α, self.det = self.mapping(self.layers[-1])
+            self.like = tf.reduce_sum(tf.exp(-0.5*tf.reduce_sum(tf.square(tf.einsum("ijlk,ijk->ijk", self.Σ, tf.subtract(tf.expand_dims(self.true, 1), self.μ))), 2) + tf.log(self.α) + tf.log(self.det) - self.Dlog2pio2), 1)
+            self.neg_log_normal_mixture_likelihood = -tf.reduce_mean(tf.log(self.like + self.ϵ))
+            self.train = tf.train.AdamOptimizer(0.0001).minimize(self.neg_log_normal_mixture_likelihood)
+        self.sess = tf.Session()
+        self.sess.run(tf.global_variables_initializer())
