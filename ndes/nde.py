@@ -560,9 +560,11 @@ class DelfiMixtureDensityNetwork():
             self.μ = tf.identity(self.μ, name = "mu")
             self.Σ = tf.identity(self.Σ, name = "Sigma")
             self.α = tf.identity(self.α, name = "alpha")
-            self.det = tf.identity(self.μ, name = "det")
+            self.det = tf.identity(self.det, name = "det")
             self.like = tf.reduce_sum(tf.exp(-0.5*tf.reduce_sum(tf.square(tf.einsum("ijlk,ijk->ijl", self.Σ, tf.subtract(tf.expand_dims(self.true, 1), self.μ))), 2) + tf.log(self.α) + tf.log(self.det) - self.D*np.log(2. * np.pi) / 2.), 1, name = "like")
             self.neg_log_normal_mixture_likelihood = -tf.reduce_mean(tf.log(self.like + self.ϵ), name = "neg_log_normal_mixture_likelihood")
             self.train = tf.train.AdamOptimizer(self.η).minimize(self.neg_log_normal_mixture_likelihood)
-        self.sess = tf.Session()
+        config = tf.ConfigProto()
+        config.gpu_options.allow_growth = True
+        self.sess = tf.Session(config = config)
         self.sess.run(tf.global_variables_initializer())
