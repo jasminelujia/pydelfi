@@ -1,21 +1,18 @@
 import tensorflow as tf
 import numpy as np
-#import keras
-#from keras import backend as K
-#from keras.models import Sequential
-#from keras.layers.core import Layer, Dense, Lambda
 import getdist
 from getdist import plots, MCSamples
 import emcee
 import matplotlib.pyplot as plt
 from tqdm import tnrange
+import distributions.priors as priors
 
 class DelfiMixtureDensityNetwork():
 
-    def __init__(self, simulator, prior, asymptotic_posterior, \
+    def __init__(self, simulator, compressor, prior, param_limits, \
                  Finv, theta_fiducial, data, n_components, \
-                 simulator_args = None, n_hidden = [50, 50], \
-                 activations = [tf.nn.tanh, tf.nn.tanh], η = 0.01, names=None, \
+                 simulator_args = None, compressor_args = None, n_hidden = [50, 50], \
+                 activations = [tf.nn.tanh, tf.nn.tanh], η = 0.001, names=None, \
                  labels=None, ranges=None, nwalkers=100, \
                  posterior_chain_length=1000, proposal_chain_length=100, \
                  rank=0, n_procs=1, comm=None, red_op=None, \
@@ -39,9 +36,16 @@ class DelfiMixtureDensityNetwork():
         # Build TensorFlow model
         self.build_network()
 
-        # Prior and asymptotic posterior
+        # Prior
         self.prior = prior
-        self.asymptotic_posterior = asymptotic_posterior
+        
+        # Fisher matrix and fiducial parameters
+        self.Finv = Finv
+        self.fisher_errors = np.sqrt(np.diag(self.Finv))
+        self.theta_fiducial = theta_fiducial
+        
+        # Asymptotic posterior
+        self.asymptotic_posterior = priors.TruncatedGaussian(self.theta_fiducial, self.Finv, param_limits[0], param_limits[1])
 
         # Training data
         self.ps = []
@@ -60,12 +64,11 @@ class DelfiMixtureDensityNetwork():
         # Simulator
         self.simulator = simulator
         self.simulator_args = simulator_args
-
-        # Fisher matrix and fiducial parameters
-        self.Finv = Finv
-        self.fisher_errors = np.sqrt(np.diag(self.Finv))
-        self.theta_fiducial = theta_fiducial
-
+        
+        # Compressor
+        self.compressor = compressor
+        self.compressor_args = compressor_args
+        
         # Data
         self.data = data
 
@@ -149,7 +152,7 @@ class DelfiMixtureDensityNetwork():
         err_msg = 'Simulator returns {:s} for parameter values: {} (rank {:d})'
         while i_acpt <= self.inds_acpt[-1]:
             try:
-                sim = self.simulator(ps[i_prop,:], self.simulator_args)
+                sim = self.compressor(self.simulator(ps[i_prop,:], self.simulator_args), self.compressor_args)
                 if np.all(np.isfinite(sim.flatten())):
                     data_samples[i_acpt,:] = sim
                     parameter_samples[i_acpt,:] = ps[i_prop,:]
