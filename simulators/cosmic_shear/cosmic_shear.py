@@ -13,12 +13,9 @@ from .cosmology import *
 import scipy.constants as sc
 
 # Compute the data vector
-def power_spectrum(theta, sim_args):
+def power_spectrum(theta, pz, modes, N):
     
     # Unpack sim args
-    pz = sim_args[0]
-    modes = sim_args[1]
-    N = sim_args[2]
     nz = len(pz)
 
     # Evaluate the required (derived) cosmological parameters
@@ -121,12 +118,13 @@ def simulate(theta, sim_args):
     modes = sim_args[1]
     N = sim_args[2]
     nl = sim_args[3]
+    
     nz = len(pz_fid)
     nmodes = len(modes)
     pz = pz_fid
     
     # Compute theory power spectrum
-    C = power_spectrum(theta, [pz, modes, N])
+    C = power_spectrum(theta, pz, modes, N)
     
     # Realize noisy power spectrum
     C_hat = np.zeros((nz, nz, nmodes))
@@ -147,18 +145,16 @@ def fisher_matrix(Cinv, dCdt, npar, nl, Qinv):
     fisher_errors = np.sqrt(np.diag(Finv))
     return F, Finv, fisher_errors
 
-def projected_score(d, projection_args):
+def score(d, score_args):
     
-    Finv = projection_args[0]
-    P = projection_args[1]
-    theta_fiducial = projection_args[2]
-    fisher_errors = projection_args[3]
-    prior_mean = projection_args[4]
-    Qinv = projection_args[5]
-    Cinv = projection_args[6]
-    dCdt = projection_args[7]
-    modes = projection_args[8]
-    nl = projection_args[9]
+    Finv = score_args[0]
+    theta_fiducial = score_args[1]
+    prior_mean = score_args[2]
+    Qinv = score_args[3]
+    Cinv = score_args[4]
+    dCdt = score_args[5]
+    nl = score_args[6]
+    modes = score_args[7]
     
     # Compute the score
     t = np.zeros(len(Finv))
@@ -172,17 +168,3 @@ def projected_score(d, projection_args):
     # Return re-scaled statistics
     return t#(t - theta_fiducial)/fisher_errors
 
-def simulationABC(theta, simABC_args):
-    
-    # Unpack the sim_args
-    sim_args = simABC_args[0]
-    projection_args = simABC_args[1]
-    prior_args = simABC_args[2]
-    
-    # Simulate data
-    d = simulate(theta, sim_args)
-    
-    # Compute the projected score
-    t = projected_score(d, projection_args)
-    
-    return t
