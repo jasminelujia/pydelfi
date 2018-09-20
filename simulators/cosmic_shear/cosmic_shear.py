@@ -121,7 +121,7 @@ def simulate(theta, sim_args):
     pz = pz_fid
     
     # Compute theory power spectrum
-    C = power_spectrum(theta, [pz, modes, N])
+    C = power_spectrum(theta, pz, modes, N)
     
     # Realize noisy power spectrum
     C_hat = np.zeros((nz, nz, nmodes))

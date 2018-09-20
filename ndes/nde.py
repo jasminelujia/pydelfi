@@ -9,9 +9,9 @@ import distributions.priors as priors
 
 class DelfiMixtureDensityNetwork():
 
-    def __init__(self, simulator, compressor, prior, param_limits, \
-                 Finv, theta_fiducial, data, n_components, \
-                 simulator_args = None, compressor_args = None, n_hidden = [50, 50], \
+    def __init__(self, data, prior, param_limits, \
+                 Finv, theta_fiducial, n_components, \
+                 n_hidden = [50, 50], \
                  activations = [tf.nn.tanh, tf.nn.tanh], η = 0.001, names=None, \
                  labels=None, ranges=None, nwalkers=100, \
                  posterior_chain_length=1000, proposal_chain_length=100, \
@@ -60,14 +60,6 @@ class DelfiMixtureDensityNetwork():
         # MCMC samples of learned posterior
         self.posterior_samples = np.array([self.asymptotic_posterior.draw() for i in range(self.nwalkers*self.posterior_chain_length)])
         self.proposal_samples = np.array([self.asymptotic_posterior.draw() for i in range(self.nwalkers*self.proposal_chain_length)])
-
-        # Simulator
-        self.simulator = simulator
-        self.simulator_args = simulator_args
-        
-        # Compressor
-        self.compressor = compressor
-        self.compressor_args = compressor_args
         
         # Data
         self.data = data
@@ -139,20 +131,20 @@ class DelfiMixtureDensityNetwork():
             return 0.5 * (self.log_likelihood((x - self.theta_fiducial)/self.fisher_errors) + 2 * np.log(self.prior.pdf(x)) )
 
     # Run n_batch simulations
-    def run_simulation_batch(self, n_batch, ps):
-
+    def run_simulation_batch(self, n_batch, ps, simulator, compressor, simulator_args, compressor_args):
+        
         # Dimension outputs
         data_samples = np.zeros((n_batch, self.npar))
         parameter_samples = np.zeros((n_batch, self.npar))
-
-        # Run samples assigned to each process, catching exceptions
+        
+        # Run samples assigned to each process, catching exceptions 
         # (when simulator returns np.nan).
         i_prop = self.inds_prop[0]
         i_acpt = self.inds_acpt[0]
         err_msg = 'Simulator returns {:s} for parameter values: {} (rank {:d})'
         while i_acpt <= self.inds_acpt[-1]:
             try:
-                sim = self.compressor(self.simulator(ps[i_prop,:], self.simulator_args), self.compressor_args)
+                sim = compressor(simulator(ps[i_prop,:], simulator_args), compressor_args)
                 if np.all(np.isfinite(sim.flatten())):
                     data_samples[i_acpt,:] = sim
                     parameter_samples[i_acpt,:] = ps[i_prop,:]
@@ -192,9 +184,9 @@ class DelfiMixtureDensityNetwork():
         else:
             return np.log(like)
 
-    def sequential_training(self, n_initial, n_batch, n_populations, proposal, \
+    def sequential_training(self, simulator, compressor, n_initial, n_batch, n_populations, proposal, \
                             safety = 5, plot = True, batch_size=100, \
-                            validation_split=0.1, epochs=100, epsilon = 1e-37):
+                            validation_split=0.1, epochs=100, epsilon = 1e-37, simulator_args=None, compressor_args=None):
 
         # Generate initial theta values from some broad proposal on
         # master process and share with other processes. Overpropose
@@ -214,7 +206,7 @@ class DelfiMixtureDensityNetwork():
         # Run simulations at those theta values
         if self.rank == 0:
             print('Running initial {} sims...'.format(n_initial))
-        self.xs, self.ps = self.run_simulation_batch(n_initial, ps)
+        self.xs, self.ps = self.run_simulation_batch(n_initial, ps, simulator, compressor, simulator_args, compressor_args)
         if self.rank == 0:
             print('Done.')
 
@@ -280,7 +272,7 @@ class DelfiMixtureDensityNetwork():
             self.inds_acpt = self.allocate_jobs(n_batch)
             if self.rank == 0:
                 print('Running {} sims...'.format(n_batch))
-            xs_batch, ps_batch = self.run_simulation_batch(n_batch, ps_batch)
+            xs_batch, ps_batch = self.run_simulation_batch(n_batch, ps_batch, simulator, compressor, simulator_args, compressor_args)
             if self.rank == 0:
                 print('Done.')
 
@@ -382,6 +374,67 @@ class DelfiMixtureDensityNetwork():
             self.loss_trace.append(history['loss'][-1])
             self.val_loss_trace.append(history['val_loss'][-1])
             self.n_sim_trace.append(0)
+
+    def train(self, plot=True, batch_size=100, validation_split=0.1, epochs=100, patience=20):
+
+        # Early Stopping CallBack
+        kcb = keras.callbacks.EarlyStopping(monitor='val_loss', \
+                                    min_delta=0, \
+                                    patience=patience, \
+                                    verbose=0, mode='auto')
+        
+        # Train with stochastic gradients
+        history = self.mdn.fit(self.x_train, self.y_train, \
+                           batch_size=batch_size, \
+                           epochs=epochs, verbose=1, \
+                           validation_split=validation_split, \
+                           callbacks=[kcb])
+          
+        # Train with exact gradients
+        if polish == True:
+            
+            # Early Stopping CallBack
+            kcb = keras.callbacks.EarlyStopping(monitor='val_loss', \
+                                                min_delta=0, \
+                                                patience=patience, \
+                                                verbose=0, mode='auto')
+                                                
+            history = self.mdn.fit(self.x_train, self.y_train, \
+                                    batch_size=self.n_sims, \
+                                    epochs=epochs, verbose=1, \
+                                    validation_split=validation_split, \
+                                    callbacks=[kcb])
+        
+        # Update the loss and validation loss
+        self.loss = np.concatenate([self.loss, history.history['loss']])
+        self.val_loss = np.concatenate([self.val_loss, history.history['val_loss']])
+        self.loss_trace.append(history.history['loss'][-1])
+        self.val_loss_trace.append(history.history['val_loss'][-1])
+        self.n_sim_trace.append(self.n_sims)
+        
+        # Generate posterior samples
+        print('Sampling approximate posterior...')
+        self.posterior_samples = \
+                self.emcee_sample(self.log_posterior, \
+                                  [self.posterior_samples[-i,:] for i in range(self.nwalkers)], \
+                                  main_chain=self.posterior_chain_length)
+        print('Done.')
+            
+        # If plot == True, plot the current posterior estimate
+        if plot == True:
+            self.triangle_plot([self.posterior_samples], \
+                                savefig=True, \
+                                filename='post_trained.pdf')
+
+    def load_simulations(self, xs_batch, ps_batch):
+        
+        ps_batch = (ps_batch - self.theta_fiducial)/self.fisher_errors
+        xs_batch = (xs_batch - self.theta_fiducial)/self.fisher_errors
+        self.ps = np.concatenate([self.ps, ps_batch])
+        self.xs = np.concatenate([self.xs, xs_batch])
+        self.x_train = self.ps.astype(np.float32)
+        self.y_train = self.xs.astype(np.float32)
+        self.n_sims += n_batch
 
     def triangle_plot(self, samples, savefig = False, filename = None):
 
