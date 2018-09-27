@@ -4,7 +4,7 @@ import getdist
 from getdist import plots, MCSamples
 import emcee
 import matplotlib.pyplot as plt
-from tqdm import tnrange
+from tqdm import tnrange, tqdm
 import distributions.priors as priors
 
 class DelfiMixtureDensityNetwork():
@@ -142,6 +142,7 @@ class DelfiMixtureDensityNetwork():
         i_prop = self.inds_prop[0]
         i_acpt = self.inds_acpt[0]
         err_msg = 'Simulator returns {:s} for parameter values: {} (rank {:d})'
+        pbar = tqdm(total = self.inds_acpt[-1] + 1)
         while i_acpt <= self.inds_acpt[-1]:
             try:
                 sim = compressor(simulator(ps[i_prop,:], simulator_args), compressor_args)
@@ -149,11 +150,13 @@ class DelfiMixtureDensityNetwork():
                     data_samples[i_acpt,:] = sim
                     parameter_samples[i_acpt,:] = ps[i_prop,:]
                     i_acpt += 1
+                    pbar.update(1)
                 else:
                     print(err_msg.format('NaN/inf', ps[i_prop,:], self.rank))
             except:
                 print(err_msg.format('exception', ps[i_prop,:], self.rank))
             i_prop += 1
+        pbar.close()
 
         # Reduce results from all processes and return
         data_samples = self.complete_array(data_samples)
