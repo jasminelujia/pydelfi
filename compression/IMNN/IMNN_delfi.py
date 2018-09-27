@@ -7,9 +7,11 @@ import tensorflow as tf
 import pickle
 import tqdm
 
-def train_IMNN(simulator, simulator_args, theta, der, initial_sims, partial_fraction, filename, num_epochs, make_simulations = True):
+def train_IMNN(simulator, simulator_args, theta, der, initial_sims, filename, num_epochs, make_simulations = True):
 
     tf.reset_default_graph()
+
+    partial_fraction = 0.05
     if make_simulations:
         data = []
         data_m = []
