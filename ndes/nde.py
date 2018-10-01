@@ -50,7 +50,7 @@ class DelfiMixtureDensityNetwork():
         self.mdn.compile(loss=neg_log_normal_mixture_likelihood,
                          optimizer='adam')
             
-        # Prior and asymptotic posterior
+        # Prior
         self.prior = prior
 
         # Fisher matrix and fiducial parameters
@@ -209,7 +209,7 @@ class DelfiMixtureDensityNetwork():
 
     def sequential_training(self, simulator, compressor, n_initial, n_batch, n_populations, proposal, \
                             simulator_args = None, compressor_args = None, safety = 5, plot = True, batch_size=100, \
-                            validation_split=0.1, epochs=100, patience=20, polish=True):
+                            validation_split=0.1, epochs=100, patience=20, polish=True, polish_patience=5):
 
         # Generate initial theta values from some broad proposal on 
         # master process and share with other processes. Overpropose
@@ -262,7 +262,7 @@ class DelfiMixtureDensityNetwork():
                 # Early Stopping CallBack
                 kcb = keras.callbacks.EarlyStopping(monitor='val_loss', \
                                                     min_delta=0, \
-                                                    patience=patience, \
+                                                    patience=polish_patience, \
                                                     verbose=0, mode='auto')
                                                     
                 history = self.mdn.fit(self.x_train, self.y_train, \
@@ -350,7 +350,7 @@ class DelfiMixtureDensityNetwork():
                     # Early Stopping CallBack
                     kcb = keras.callbacks.EarlyStopping(monitor='val_loss', \
                                                         min_delta=0, \
-                                                        patience=patience, \
+                                                        patience=polish_patience, \
                                                         verbose=0, mode='auto')
                                                         
                     history = self.mdn.fit(self.x_train, self.y_train, \
@@ -404,7 +404,7 @@ class DelfiMixtureDensityNetwork():
                                     savefig=True, \
                                     filename='seq_train_post_final.pdf')
 
-    def train(self, plot=True, batch_size=100, validation_split=0.1, epochs=100, patience=20):
+    def train(self, plot=True, batch_size=100, validation_split=0.1, epochs=500, patience=20, polish=True, polish_patience=5):
 
         # Early Stopping CallBack
         kcb = keras.callbacks.EarlyStopping(monitor='val_loss', \
@@ -425,7 +425,7 @@ class DelfiMixtureDensityNetwork():
             # Early Stopping CallBack
             kcb = keras.callbacks.EarlyStopping(monitor='val_loss', \
                                                 min_delta=0, \
-                                                patience=patience, \
+                                                patience=polish_patience, \
                                                 verbose=0, mode='auto')
                                                 
             history = self.mdn.fit(self.x_train, self.y_train, \
@@ -463,7 +463,7 @@ class DelfiMixtureDensityNetwork():
         self.xs = np.concatenate([self.xs, xs_batch])
         self.x_train = self.ps.astype(np.float32)
         self.y_train = self.xs.astype(np.float32)
-        self.n_sims += n_batch
+        self.n_sims += len(ps_batch)
 
 
     def fisher_pretraining(self, n_batch, proposal, plot=True, batch_size=100, validation_split=0.1, epochs=100, patience=20):
@@ -490,12 +490,12 @@ class DelfiMixtureDensityNetwork():
             xs = np.array([pss + np.dot(Ldd, np.random.normal(0, 1, self.npar)) for pss in ps])
 
             # Construct the initial training-set
-            self.x_train = ps.astype(np.float32).reshape((n_batch, self.npar))
-            self.y_train = xs.astype(np.float32).reshape((n_batch, self.npar))
+            fisher_x_train = ps.astype(np.float32).reshape((n_batch, self.npar))
+            fisher_y_train = xs.astype(np.float32).reshape((n_batch, self.npar))
 
             # Train network on initial (asymptotic) simulations
             print("Training on the pre-training data...")
-            history = self.mdn.fit(self.x_train, self.y_train,
+            history = self.mdn.fit(fisher_x_train, fisher_y_train,
               batch_size=batch_size, epochs=epochs, verbose=1, validation_split=validation_split, callbacks=[keras.callbacks.EarlyStopping(monitor='val_loss', min_delta=0, patience=patience, verbose=0, mode='auto')])
             print("Done.")
             
