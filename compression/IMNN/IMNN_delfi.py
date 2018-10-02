@@ -7,7 +7,7 @@ import tensorflow as tf
 import pickle
 import tqdm
 
-def train_IMNN(simulator, simulator_args, theta, der, initial_sims, filename, num_epochs, make_simulations = True):
+def train_IMNN(simulator, simulator_args, theta, der, initial_sims, filename, num_epochs, proposal, proposal_sampler, proposal_sims, make_simulations = True):
 
     tf.reset_default_graph()
 
@@ -29,6 +29,10 @@ def train_IMNN(simulator, simulator_args, theta, der, initial_sims, filename, nu
                     data_m[-1].append(simulator(der[0], simulator_args).flatten())
                     np.random.seed(seed)
                     data_p[-1].append(simulator(der[1], simulator_args).flatten())
+        data_check = []
+        for sim in tqdm.trange(proposal_sims):
+            theta = proposal_sampler.draw()
+            data_check.append(simulator(theta, simulator_args).flatten())
 
         data = {'x_central': np.array(data)[:len(data)//2],
                 'x_m': np.array(data_m)[:len(data_m)//2],
@@ -36,9 +40,10 @@ def train_IMNN(simulator, simulator_args, theta, der, initial_sims, filename, nu
                 'x_central_test': np.array(data)[len(data)//2:],
                 'x_m_test': np.array(data_m)[len(data_m)//2:],
                 'x_p_test': np.array(data_p)[len(data_p)//2:],
+                'x_check': np.array(data_check),
                 }
 
-        print(data['x_central'].shape, data['x_m'].shape, data['x_p'].shape, data['x_central_test'].shape, data['x_m_test'].shape, data['x_p_test'].shape)
+        print(data['x_central'].shape, data['x_m'].shape, data['x_p'].shape, data['x_central_test'].shape, data['x_m_test'].shape, data['x_p_test'].shape, data['x_check'].shape)
 
         with open("simulations/" + filename + ".pickle", 'wb') as handle:
             pickle.dump(data, handle, protocol=pickle.HIGHEST_PROTOCOL)
@@ -48,13 +53,13 @@ def train_IMNN(simulator, simulator_args, theta, der, initial_sims, filename, nu
         with open("simulations/" + filename + ".pickle", 'rb') as handle:
             data = pickle.load(handle)
 
-        print(data['x_central'].shape, data['x_m'].shape, data['x_p'].shape, data['x_central_test'].shape, data['x_m_test'].shape, data['x_p_test'].shape)
+        print(data['x_central'].shape, data['x_m'].shape, data['x_p'].shape, data['x_central_test'].shape, data['x_m_test'].shape, data['x_p_test'].shape, data['x_check'].shape)
 
     der_den = 1. / (der[1] - der[0])
 
     hidden_layers = []
     nodes = data['x_central'].shape[-1]
-    while nodes > len(theta):
+    while nodes > 5 * len(theta):
         hidden_layers.append(nodes)
         nodes = nodes // 2
 
@@ -67,6 +72,9 @@ def train_IMNN(simulator, simulator_args, theta, der, initial_sims, filename, nu
         'differentiation fraction': partial_fraction,
         'number of summaries': len(theta),
         'calculate MLE': True,
+        'covariance regularisation': True,
+        'number of simulations for covariance regularisation': proposal_sims,
+        'comparison covariance': proposal,
         'prebuild': True,
         'input shape': list(data['x_central'].shape[1:]),
         'preload data': data,
