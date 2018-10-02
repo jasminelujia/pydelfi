@@ -64,23 +64,24 @@ def simulation_seeded(theta, seed, sim_args):
     # Return signal + noise
     return mb
 
-def simulationABC(theta, simABC_args):
+def compressor(data, args):
+
+    theta_fiducial, Finv, Cinv, dmdt, dCdt, mu, Qinv, prior_mean = args
     
-    # Extract args
-    theta_fiducial = simABC_args[0]
-    Finv = simABC_args[1]
-    Cinv = simABC_args[2]
-    dmdt = simABC_args[3]
-    dCdt = simABC_args[4]
-    mu = simABC_args[5]
-    Sinv = simABC_args[6]
-    mu_prior = simABC_args[7]
-    sim_args = simABC_args[8]
+    return mle(theta_fiducial, Finv, Cinv, dmdt, dCdt, mu, Qinv, prior_mean, data)
+
+def compressor_projected(data, args):
     
-    # Simulate data
-    d = simulation(theta, sim_args)
-    
+    theta_fiducial, Finv, Cinv, dmdt, dCdt, mu, Qinv, prior_mean, F, P1, P2 = args
+
     # MOPED compress the data
-    d_twidle = mle(theta_fiducial, Finv, Cinv, dmdt, dCdt, mu, Sinv, mu_prior, d)
+    d_twidle = mle(theta_fiducial, Finv, Cinv, dmdt, dCdt, mu, Qinv, prior_mean, data)
     
+    # Now do the projection
+    d_twidle = np.dot(F, d_twidle - theta_fiducial - np.dot(Finv, np.dot(Qinv, prior_mean - theta_fiducial)))
+    d_twidle = np.dot(Finv[0:2, 0:2], np.array([d_twidle[0] - np.dot(P1, d_twidle[2:]), d_twidle[1] - np.dot(P2, d_twidle[2:])]))
+    d_twidle = d_twidle + theta_fiducial[:2] + np.dot(Finv[:2,:2], np.dot(Qinv[:2,:2], prior_mean[:2] - theta_fiducial[:2]))
+
     return d_twidle
+
+

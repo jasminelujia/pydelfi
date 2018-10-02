@@ -20,7 +20,7 @@ class DelfiMixtureDensityNetwork():
                  labels=None, ranges=None, nwalkers=100, \
                  posterior_chain_length=1000, proposal_chain_length=100, \
                  rank=0, n_procs=1, comm=None, red_op=None, \
-                 show_plot=True):
+                 show_plot=True, results_dir = ""):
 
         # Input x and output t dimensions
         self.D = len(data)
@@ -85,6 +85,9 @@ class DelfiMixtureDensityNetwork():
         self.labels = labels
         self.ranges = ranges
         self.show_plot = show_plot
+        
+        # Results directory
+        self.results_dir = results_dir
     
         # Training loss, validation loss
         self.loss = []
@@ -278,19 +281,33 @@ class DelfiMixtureDensityNetwork():
             self.val_loss_trace.append(history.history['val_loss'][-1])
             self.n_sim_trace.append(self.n_sims)
             
+            # Save the losses to file
+            f = open('{}loss_convergence.dat'.format(self.results_dir), 'w')
+            np.savetxt(f, np.column_stack([self.n_sim_trace, self.loss_trace]))
+            f.close()
+            f = open('{}val_loss_convergence.dat'.format(self.results_dir), 'w')
+            np.savetxt(f, np.column_stack([self.n_sim_trace, self.val_loss_trace]))
+            f.close()
+            
             # Generate posterior samples
             print('Sampling approximate posterior...')
             self.posterior_samples = \
                 self.emcee_sample(self.log_posterior, \
                                   [self.posterior_samples[-i,:] for i in range(self.nwalkers)], \
                                   main_chain=self.posterior_chain_length)
+            
+            # Save posterior samples to file
+            f = open('{}posterior_samples.dat'.format(self.results_dir), 'w')
+            np.savetxt(f, self.posterior_samples)
+            f.close()
+            
             print('Done.')
 
             # If plot == True, plot the current posterior estimate
             if plot == True:
                 self.triangle_plot([self.posterior_samples], \
                                     savefig=True, \
-                                    filename='seq_train_post_0.pdf')
+                                    filename='{}seq_train_post_0.pdf'.format(self.results_dir))
 
         # Loop through a number of populations
         for i in range(n_populations):
@@ -365,6 +382,14 @@ class DelfiMixtureDensityNetwork():
                 self.loss_trace.append(history.history['loss'][-1])
                 self.val_loss_trace.append(history.history['val_loss'][-1])
                 self.n_sim_trace.append(self.n_sims)
+                
+                # Save the losses to file
+                f = open('{}loss_convergence.dat'.format(self.results_dir), 'w')
+                np.savetxt(f, np.column_stack([self.n_sim_trace, self.loss_trace]))
+                f.close()
+                f = open('{}val_loss_convergence.dat'.format(self.results_dir), 'w')
+                np.savetxt(f, np.column_stack([self.n_sim_trace, self.val_loss_trace]))
+                f.close()
 
                 # Generate posterior samples
                 print('Sampling approximate posterior...')
@@ -372,37 +397,19 @@ class DelfiMixtureDensityNetwork():
                     self.emcee_sample(self.log_posterior, \
                                       [self.posterior_samples[j] for j in range(self.nwalkers)], \
                                       main_chain=self.posterior_chain_length)
+                
+                # Save posterior samples to file
+                f = open('{}posterior_samples.dat'.format(self.results_dir), 'w')
+                np.savetxt(f, self.posterior_samples)
+                f.close()
+
                 print('Done.')
 
                 # If plot == True
                 if plot == True:
                     self.triangle_plot([self.posterior_samples], \
                                         savefig=True, \
-                                        filename='seq_train_post_{:d}.pdf'.format(i + 1))
-
-        # Train on master only
-        if self.rank == 0:
-
-            # Train the network over some more epochs
-            print('Final round of training with larger SGD batch size...')
-            self.mdn.fit(self.x_train, self.y_train, \
-                         batch_size=self.n_sims, epochs=300, \
-                         verbose=1, validation_split=0.1, \
-                         callbacks=[kcb])
-            print('Done.')
-
-            print('Sampling approximate posterior...')
-            self.posterior_samples = \
-                self.emcee_sample(self.log_posterior, \
-                                  [self.posterior_samples[-i,:] for i in range(self.nwalkers)], \
-                                  main_chain=self.posterior_chain_length)
-            print('Done.')
-
-            # if plot == True
-            if plot == True:
-                self.triangle_plot([self.posterior_samples], \
-                                    savefig=True, \
-                                    filename='seq_train_post_final.pdf')
+                                        filename='{}seq_train_post_{:d}.pdf'.format(self.results_dir, i + 1))
 
     def train(self, plot=True, batch_size=100, validation_split=0.1, epochs=500, patience=20, polish=True, polish_patience=5):
 
@@ -441,19 +448,33 @@ class DelfiMixtureDensityNetwork():
         self.val_loss_trace.append(history.history['val_loss'][-1])
         self.n_sim_trace.append(self.n_sims)
         
+        # Save the losses to file
+        f = open('{}loss.dat'.format(self.results_dir), 'w')
+        np.savetxt(f, self.loss)
+        f.close()
+        f = open('{}val_loss.dat'.format(self.results_dir), 'w')
+        np.savetxt(f, self.val_loss)
+        f.close()
+        
         # Generate posterior samples
         print('Sampling approximate posterior...')
         self.posterior_samples = \
                 self.emcee_sample(self.log_posterior, \
                                   [self.posterior_samples[-i,:] for i in range(self.nwalkers)], \
                                   main_chain=self.posterior_chain_length)
+        
+        # Save posterior samples to file
+        f = open('{}posterior_samples.dat'.format(self.results_dir), 'w')
+        np.savetxt(f, self.posterior_samples)
+        f.close()
+        
         print('Done.')
             
         # If plot == True, plot the current posterior estimate
         if plot == True:
             self.triangle_plot([self.posterior_samples], \
                                 savefig=True, \
-                                filename='post_trained.pdf')
+                                filename='{}post_trained.pdf'.format(self.results_dir))
 
     def load_simulations(self, xs_batch, ps_batch):
         
@@ -472,7 +493,7 @@ class DelfiMixtureDensityNetwork():
         if self.rank == 0:
 
             # Generate fisher pre-training data
-            print("Generating pre-training data...")
+            print("Generating fisher pre-training data...")
 
             # Anticipated covariance of the re-scaled data
             Cdd = np.zeros((self.npar, self.npar))
@@ -510,7 +531,7 @@ class DelfiMixtureDensityNetwork():
             if plot == True:
                 self.triangle_plot([self.posterior_samples], \
                                     savefig=True, \
-                                    filename='fish_pretrain_post.pdf')
+                                    filename='{}fisher_pretrain_post.pdf'.format(self.results_dir))
 
             # Update the loss (as a function of the number of simulations) and number of simulations ran (zero so far)
             self.loss_trace.append(history.history['loss'][-1])

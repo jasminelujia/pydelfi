@@ -268,10 +268,9 @@ def fisher_matrix(Cinv, dCdt, npar, nl, Qinv):
     return F, Finv, fisher_errors
 
 
-def projected_score(d, projection_args):
+def score(d, projection_args):
     
     Finv = projection_args[0]
-    P = projection_args[1]
     theta_fiducial = projection_args[2]
     fisher_errors = projection_args[3]
     prior_mean = projection_args[4]
@@ -293,20 +292,35 @@ def projected_score(d, projection_args):
     # Return re-scaled statistics
     return t#(t - theta_fiducial)/fisher_errors
 
-def simulationABC(theta, simABC_args):
+def projected_score(d, projection_args):
     
-    # Unpack the sim_args
-    sim_args = simABC_args[0]
-    projection_args = simABC_args[1]
-    prior_args = simABC_args[2]
+    Finv = projection_args[0]
+    P = projection_args[1]
+    theta_fiducial = projection_args[2]
+    fisher_errors = projection_args[3]
+    prior_mean = projection_args[4]
+    Qinv = projection_args[5]
+    Cinv = projection_args[6]
+    dCdt = projection_args[7]
+    modes = projection_args[8]
+    nl = projection_args[9]
     
-    # Simulate data
-    d = simulate(theta, sim_args)
+    # Compute the score
+    dLdt = np.zeros(len(Finv))
+    for a in range(len(Finv)):
+        for l in range(len(modes)):
+            dLdt[a] += nl[l]* (-0.5*np.trace(np.dot(Cinv[:,:,l], dCdt[a,:,:,l])) + 0.5*np.trace(np.dot( np.dot(Cinv[:,:,l], np.dot(dCdt[a,:,:,l], Cinv[:,:,l])), d[:,:,l]) ) )
+
+    # Do the projection
+    t = np.zeros(len(P))
+    for a in range(len(P)):
+        t[a] = dLdt[a] - np.dot(P[a], dLdt[len(P):])   
     
-    # Compute the projected score
-    t = projected_score(d, projection_args)
+    # Make it an MLE
+    t = np.dot(Finv[0:len(P), 0:len(P)], t) + theta_fiducial[0:len(P)] + np.dot(Finv[:len(P),:len(P)], np.dot(Qinv[:len(P),:len(P)], prior_mean[:len(P)] - theta_fiducial[:len(P)]))
     
-    return t
+    # Return re-scaled statistics
+    return t#(t - theta_fiducial[0:len(P)])/fisher_errors[0:len(P)]
 
 def flat_prior(theta, prior_args):
     
