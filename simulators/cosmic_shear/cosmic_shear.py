@@ -92,7 +92,7 @@ def power_spectrum(theta, pz, modes, N):
         w.append(interp)
     
     # Tensor for cls
-    cls = np.zeros((len(modes), nz, nz))
+    cls = np.zeros((nz, nz, len(modes)))
 
     # Pull required cosmological parameters out of cosmo
     r_hubble = sc.c/(1000*hubble)
@@ -116,9 +116,12 @@ def simulate(theta, sim_args):
     
     pz_fid, modes, N, nl = sim_args
     
-    nz = len(pz_fid)
+    nz = int(len(pz_fid))
     nmodes = len(modes)
     pz = pz_fid
+    
+    # simulated data holder
+    d = np.zeros((int(nmodes*nz*(nz+1)/2)))
     
     # Compute theory power spectrum
     C = power_spectrum(theta, pz, modes, N)
@@ -127,8 +130,11 @@ def simulate(theta, sim_args):
     C_hat = np.zeros((nz, nz, nmodes))
     for i in range(nmodes):
         C_hat[:, :, i] = wishart.rvs(df=nl[i], scale=C[:,:,i])/nl[i]
+        x = np.tril(C_hat[:, :, i])
+        x = x[np.nonzero(x)]
+        d[i*int(nz*(nz+1)/2):(i+1)*int(nz*(nz+1)/2)] = x
     
-    return C_hat
+    return d
 
 def fisher_matrix(Cinv, dCdt, npar, nl, Qinv):
     
