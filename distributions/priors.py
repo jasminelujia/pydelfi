@@ -9,6 +9,7 @@ class TruncatedGaussian():
         self.C = C
         self.lower = lower
         self.upper = upper
+        self.L = np.linalg.cholesky(C)
         
     def uniform(self, x):
 
@@ -23,10 +24,10 @@ class TruncatedGaussian():
 
         P = 0
         while P == 0:
-            x = multivariate_normal.rvs(self.mean, self.C)
+            x = self.mean + np.dot(self.L, np.random.normal(0, 1, len(self.mean)))
             P = self.uniform(x)
         return x
 
     def pdf(self, x):
 
-            return self.uniform(x)*multivariate_normal.pdf(x, mean=self.mean, cov=self.C)
+        return self.uniform(x)*multivariate_normal.pdf(x, mean=self.mean, cov=self.C)
