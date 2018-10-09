@@ -7,6 +7,7 @@ import emcee
 import matplotlib.pyplot as plt
 import distributions.priors as priors
 import numpy as np
+import tqdm
 
 class Delfi():
 
@@ -15,21 +16,21 @@ class Delfi():
                  posterior_chain_length=100, proposal_chain_length=100, \
                  rank=0, n_procs=1, comm=None, red_op=None, \
                  show_plot=True, results_dir = "", seed_generator = None):
-        
+
         # Data
         self.data = data
         self.D = len(data)
-        
+
         # Prior
         self.prior = prior
 
         # Input x and output t dimensions
         self.npar = len(theta_fiducial)
-    
+
         # Initialize the NDE and trainer
         self.nde = nde
         self.trainer = ndes.train.ConditionalTrainer(nde)
-        
+
         # Tensorflow session for the NDE training
         self.sess = tf.Session(config = tf.ConfigProto())
         self.sess.run(tf.global_variables_initializer())
@@ -39,7 +40,7 @@ class Delfi():
         self.fisher_errors = np.sqrt(np.diag(self.Finv))
         self.theta_fiducial = theta_fiducial
         self.npar = len(theta_fiducial)
-        
+
         # Parameter limits
         if param_limits is not None:
             # Set to provided prior limits if provided
@@ -49,7 +50,7 @@ class Delfi():
             # Else set to max and min float32
             self.lower = np.ones(self.npar)*np.finfo(np.float32).min
             self.upper = np.ones(self.npar)*np.finfo(np.float32).max
-        
+
         # Asymptotic posterior
         self.asymptotic_posterior = priors.TruncatedGaussian(self.theta_fiducial, self.Finv, self.lower, self.upper)
 
@@ -59,25 +60,25 @@ class Delfi():
         self.x_train = tf.placeholder(tf.float32, shape = (None, self.D))
         self.y_train = tf.placeholder(tf.float32, shape = (None, self.D))
         self.n_sims = 0
-        
+
         # MCMC chain parameters
         self.nwalkers = nwalkers
         self.posterior_chain_length = posterior_chain_length
         self.proposal_chain_length = proposal_chain_length
-            
+
         # MCMC samples of learned posterior
         self.posterior_samples = np.array([self.asymptotic_posterior.draw() for i in range(self.nwalkers*self.posterior_chain_length)])
         self.proposal_samples = np.array([self.asymptotic_posterior.draw() for i in range(self.nwalkers*self.proposal_chain_length)])
-    
+
         # Parameter names and ranges for plotting with GetDist
         self.names = param_names
         self.labels = param_names
         self.ranges = dict(zip(param_names, [ [self.lower[i], self.upper[i]] for i in range(self.npar) ]))
         self.show_plot = show_plot
-        
+
         # Results directory
         self.results_dir = results_dir
-        
+
         # Training loss, validation loss
         self.training_loss = np.array([])
         self.validation_loss = np.array([])
@@ -119,35 +120,35 @@ class Delfi():
         else:
             target = target_distrib
         return target
-    
+
     # Log posterior
     def log_posterior(self, x):
-        
+
         if self.prior.pdf(x) == 0:
             return -1e300
         else:
             return self.log_likelihood(x) + np.log(self.prior.pdf(x))
-    
+
     # Log posterior
     def log_geometric_mean_proposal(self, x):
-        
+
         if self.prior.pdf(x) == 0:
             return -1e300
         else:
             return 0.5 * (self.log_likelihood(x) + 2 * np.log(self.prior.pdf(x)) )
-    
+
     # Run n_batch simulations
     def run_simulation_batch(self, n_batch, ps, simulator, compressor, simulator_args, compressor_args, seed_generator = None):
-        
+
         # Random seed generator: set to unsigned 32 bit int random numbers as default
         if seed_generator is None:
             seed_generator = lambda: np.random.randint(2147483647)
-        
+
         # Dimension outputs
         data_samples = np.zeros((n_batch, self.npar))
         parameter_samples = np.zeros((n_batch, self.npar))
-        
-        # Run samples assigned to each process, catching exceptions 
+
+        # Run samples assigned to each process, catching exceptions
         # (when simulator returns np.nan).
         i_prop = self.inds_prop[0]
         i_acpt = self.inds_acpt[0]
@@ -172,24 +173,24 @@ class Delfi():
 
     # EMCEE sampler
     def emcee_sample(self, log_likelihood, x0, burn_in_chain=100, main_chain=100):
-    
+
         # Set up the sampler
         sampler = emcee.EnsembleSampler(self.nwalkers, self.D, log_likelihood)
-    
+
         # Burn-in chain
         pos, prob, state = sampler.run_mcmc(x0, burn_in_chain)
         sampler.reset()
-    
+
         # Main chain
         sampler.run_mcmc(pos, main_chain)
-    
+
         return sampler.flatchain
 
     # MDN log likelihood
     def log_likelihood(self, theta):
-    
+
         lnL = self.nde.eval((np.atleast_2d((theta-self.theta_fiducial)/self.fisher_errors), np.atleast_2d((self.data-self.theta_fiducial)/self.fisher_errors)), self.sess)
-    
+
         if np.isnan(lnL) == True:
             return -1e300
         else:
@@ -205,9 +206,9 @@ class Delfi():
 
         # Generate initial theta values from some broad proposal on
         # master process and share with other processes. Overpropose
-        # by a factor of safety to (hopefully) cope gracefully with 
-        # the possibility of some bad proposals. Assign indices into 
-        # proposal array (self.inds_prop) and accepted arrays 
+        # by a factor of safety to (hopefully) cope gracefully with
+        # the possibility of some bad proposals. Assign indices into
+        # proposal array (self.inds_prop) and accepted arrays
         # (self.inds_acpt) to allow for easy MPI communication.
         if self.rank == 0:
             ps = np.array([proposal.draw() for i in range(safety * n_initial)])
@@ -229,7 +230,7 @@ class Delfi():
         if self.rank == 0:
 
             # Construct the initial training-set
-            
+
             ps_batch = (ps_batch - self.theta_fiducial)/self.fisher_errors
             xs_batch = (xs_batch - self.theta_fiducial)/self.fisher_errors
             self.ps = np.concatenate([self.ps, ps_batch])
@@ -241,26 +242,26 @@ class Delfi():
             # Train the network on these initial simulations
             val_loss, train_loss = self.trainer.train(self.sess, [self.x_train, self.y_train], validation_split = validation_split, epochs = epochs, batch_size=self.n_sims//10,
                   patience=patience, saver_name='{}tmp_model'.format(self.results_dir))
-                  
+
             # Save the training and validation losses
             self.training_loss = np.concatenate([self.training_loss, train_loss])
             self.validation_loss = np.concatenate([self.validation_loss, val_loss])
             self.sequential_training_loss.append(train_loss[-1])
             self.sequential_validation_loss.append(val_loss[-1])
             self.sequential_nsims.append(self.n_sims)
-            
+
             # Generate posterior samples
             print('Sampling approximate posterior...')
             self.posterior_samples = \
                 self.emcee_sample(self.log_posterior, \
                                   [self.posterior_samples[-i,:] for i in range(self.nwalkers)], \
                                   main_chain=self.posterior_chain_length)
-            
+
             # Save posterior samples to file
             f = open('{}posterior_samples.dat'.format(self.results_dir), 'w')
             np.savetxt(f, self.posterior_samples)
             f.close()
-            
+
             print('Done.')
 
             # If plot == True, plot the current posterior estimate
@@ -271,15 +272,15 @@ class Delfi():
 
         # Loop through a number of populations
         for i in range(n_populations):
-            
-            # Propose theta values on master process and share with 
-            # other processes. Again, ensure we propose more sets of 
+
+            # Propose theta values on master process and share with
+            # other processes. Again, ensure we propose more sets of
             # parameters than needed to cope with bad params.
             if self.rank == 0:
 
                 # Current population
                 print('Population {}/{}'.format(i+1, n_populations))
-        
+
                 # Sample the current posterior approximation
                 print('Sampling proposal density...')
                 self.proposal_samples = \
@@ -305,7 +306,7 @@ class Delfi():
 
             # Train on master only
             if self.rank == 0:
-        
+
                 # Augment the training data
                 ps_batch = (ps_batch - self.theta_fiducial)/self.fisher_errors
                 xs_batch = (xs_batch - self.theta_fiducial)/self.fisher_errors
@@ -314,11 +315,11 @@ class Delfi():
                 self.n_sims += n_batch
                 self.x_train = self.ps.astype(np.float32)
                 self.y_train = self.xs.astype(np.float32)
-        
+
                 # Train the network on these initial simulations
                 val_loss, train_loss = self.trainer.train(self.sess, [self.x_train, self.y_train], validation_split=validation_split, epochs=epochs, batch_size=self.n_sims//10,
                            patience=patience, saver_name='{}tmp_model'.format(self.results_dir))
-                           
+
                 # Save the training and validation losses
                 self.training_loss = np.concatenate([self.training_loss, train_loss])
                 self.validation_loss = np.concatenate([self.validation_loss, val_loss])
@@ -332,7 +333,7 @@ class Delfi():
                     self.emcee_sample(self.log_posterior, \
                                       [self.posterior_samples[j] for j in range(self.nwalkers)], \
                                       main_chain=self.posterior_chain_length)
-                
+
                 # Save posterior samples to file
                 f = open('{}posterior_samples.dat'.format(self.results_dir), 'w')
                 np.savetxt(f, self.posterior_samples)
@@ -351,12 +352,12 @@ class Delfi():
                     self.sequential_training_plot(savefig=True, filename='{}seq_train_loss.pdf'.format(self.results_dir))
 
     def train(self, plot=True, batch_size=100, validation_split=0.1, epochs=500, patience=20):
-        
+
         # Train the network on these initial simulations
         print('Training the neural density estimator...')
         val_loss, train_loss = self.trainer.train(self.sess, [self.x_train, self.y_train], validation_split = validation_split, epochs=epochs, batch_size=batch_size,
                            patience=patience, saver_name='{}tmp_model'.format(self.results_dir))
-                           
+
         # Save the training and validation losses
         self.training_loss = np.concatenate([self.training_loss, train_loss])
         self.validation_loss = np.concatenate([self.validation_loss, val_loss])
@@ -367,14 +368,14 @@ class Delfi():
                 self.emcee_sample(self.log_posterior, \
                                   [self.posterior_samples[-i,:] for i in range(self.nwalkers)], \
                                   main_chain=self.posterior_chain_length)
-        
+
         # Save posterior samples to file
         f = open('{}posterior_samples.dat'.format(self.results_dir), 'w')
         np.savetxt(f, self.posterior_samples)
         f.close()
-        
+
         print('Done.')
-            
+
         # If plot == True, plot the current posterior estimate
         if plot == True:
             print("Plotting the posterior (1D and 2D marginals)...")
@@ -383,7 +384,7 @@ class Delfi():
                                 filename='{}post_trained.pdf'.format(self.results_dir))
 
     def load_simulations(self, xs_batch, ps_batch):
-        
+
         ps_batch = (ps_batch - self.theta_fiducial)/self.fisher_errors
         xs_batch = (xs_batch - self.theta_fiducial)/self.fisher_errors
         self.ps = np.concatenate([self.ps, ps_batch])
@@ -410,7 +411,7 @@ class Delfi():
 
             # Sample parameters from some broad proposal
             ps = np.zeros((n_batch, self.npar))
-            for i in range(0, n_batch):
+            for i in tqdm.trange(n_batch, desc = "Sample parameters"):
                 ps[i,:] = (proposal.draw() - self.theta_fiducial)/self.fisher_errors
 
             # Sample data assuming a Gaussian likelihood
@@ -425,7 +426,7 @@ class Delfi():
             # Train the network on these initial simulations
             validation_loss, train_loss = self.trainer.train(self.sess, [fisher_x_train, fisher_y_train], validation_split = validation_split, epochs=epochs, batch_size=batch_size, patience=patience, saver_name='{}tmp_model'.format(self.results_dir))
             print('Done.')
-            
+
             # Initialization for the EMCEE sampling
             x0 = [self.posterior_samples[-i,:] for i in range(self.nwalkers)]
 
@@ -459,7 +460,7 @@ class Delfi():
                 ax.set_xticklabels(xtl, rotation=45)
         plt.tight_layout()
         plt.subplots_adjust(hspace=0, wspace=0)
-        
+
         if savefig:
             print('Saving ' + filename)
             plt.savefig(filename)
@@ -486,7 +487,7 @@ class Delfi():
                           'lines.linewidth': .5,
                           'axes.linewidth': .5,
                           'axes.edgecolor': 'black'})
-                                              
+
         # Trace plot of the training and validation loss as a function of the number of simulations ran
         plt.scatter(self.sequential_nsims, self.sequential_training_loss, s = 20, alpha = 0.5)
         plt.plot(self.sequential_nsims, self.sequential_training_loss, color = 'red', lw = 2, alpha = 0.5, label = 'training loss')

@@ -125,7 +125,6 @@ def train_IMNN(n, num_epochs):
     n.train(num_epochs = num_epochs, n_train = 1, keep_rate = 0.8)
 
 def IMNN_compressor(data, n):
-    data = data.flatten()
     data = data.reshape((1, data.shape[0]))
     return n.sess.run(n.MLE, feed_dict = {n.x: data, n.dropout: 1.})[0]
 
