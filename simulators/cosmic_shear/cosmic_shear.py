@@ -29,31 +29,33 @@ class TomographicCosmicShear():
         self.modes = (modes_edges[0:-1] + modes_edges[1:])/2
         l = np.arange(lmin, lmax)
         self.nl = np.array([sum((2*l[(l >= modes_edges[i])*(l < modes_edges[i+1])] + 1)) for i in range(len(self.modes))], dtype=int)
-        
+
         # Partial sky factor
         self.Area = Area*(np.pi/180)**2
         self.fsky = self.Area/(4*np.pi)
         self.nl = np.array(self.nl*self.fsky, dtype=int)
-    
+
 
         # Noise covariance
         self.sigma_e = sigma_e
         self.nbar = (nbar/self.nz)*(60*180./np.pi)**2
         self.N = (self.sigma_e**2/self.nbar)*np.eye(self.nz)
 
+        self.shape = [self.n_ell_bins, self.nz, self.nz]
+
     def simulate(self, theta, seed):
-        
+
         # Set the seed
         np.random.seed(seed)
-    
+
         # Compute theory power spectrum
         C = self.power_spectrum(theta)
-    
+
         # Realize noisy power spectrum
         C_hat = np.zeros((self.n_ell_bins, self.nz, self.nz))
         for i in range(self.n_ell_bins):
             C_hat[i, :, :] = wishart.rvs(df=self.nl[i], scale=C[i, :,:])/self.nl[i]
-    
+
         return C_hat
 
     # Compute the data vector
@@ -71,7 +73,7 @@ class TomographicCosmicShear():
         hubble = h*100
         w0 = -1.
         wa = 0
-        
+
         # Initialize cosmology object
         cosmo = cosmology(Omega_m=omm, Omega_de=omde, Omega_b=omb, h=h, n=ns, sigma8=sigma8, w0=w0, wa=0)
 
@@ -111,7 +113,7 @@ class TomographicCosmicShear():
         # Compute lensing weights...
 
         w = []
-        
+
         # Compute the weight function associated with each bin in turn, over r-points and then interpolate
         for i in range(0, self.nz):
 
@@ -131,7 +133,7 @@ class TomographicCosmicShear():
             # Interpolate (generate interpolation function) and add interpolation function to the array w
             interp = interpolate.InterpolatedUnivariateSpline(rpoints, weight, k = 3)
             w.append(interp)
-        
+
         # Tensor for cls
         cls = np.zeros((self.n_ell_bins, self.nz, self.nz))
 
@@ -150,7 +152,7 @@ class TomographicCosmicShear():
                     cls[L, i, j] = integrate.romb(intvals, dr)
                     cls[L, j, i] = cls[L, i, j]
             cls[L, :,:] = cls[L, :,:] + self.N
-                    
+
         return cls
 
     def compute_derivatives(self, theta_fiducial, h):
@@ -164,10 +166,10 @@ class TomographicCosmicShear():
             theta_plus[i] += h[i]
             theta_minus = np.copy(theta_fiducial)
             theta_minus[i] -= h[i]
-            
+
             Cp = self.power_spectrum(theta_plus)
             Cm = self.power_spectrum(theta_minus)
-            
+
             dCdt[i, :, :, :] = (Cp - Cm)/(2*h[i])
 
         return dCdt
@@ -189,7 +191,7 @@ class TomographicCosmicShearPhotoz():
         self.modes = (modes_edges[0:-1] + modes_edges[1:])/2
         l = np.arange(lmin, lmax)
         self.nl = np.array([sum((2*l[(l >= modes_edges[i])*(l < modes_edges[i+1])] + 1)) for i in range(len(self.modes))], dtype=int)
-        
+
         # Partial sky factor
         self.Area = Area*(np.pi/180)**2
         self.fsky = self.Area/(4*np.pi)
@@ -201,18 +203,18 @@ class TomographicCosmicShearPhotoz():
         self.N = (self.sigma_e**2/self.nbar)*np.eye(self.nz)
 
     def simulate(self, theta, seed):
-        
+
         # Set the seed
         np.random.seed(seed)
-    
+
         # Compute theory power spectrum
         C = self.power_spectrum(theta)
-    
+
         # Realize noisy power spectrum
         C_hat = np.zeros((self.n_ell_bins, self.nz, self.nz))
         for i in range(self.n_ell_bins):
             C_hat[i, :, :] = wishart.rvs(df=self.nl[i], scale=C[i, :,:])/self.nl[i]
-    
+
         return C_hat
 
     # Compute the data vector
@@ -230,7 +232,7 @@ class TomographicCosmicShearPhotoz():
         hubble = h*100
         w0 = -1.
         wa = 0
-        
+
         # Initialize cosmology object
         cosmo = cosmology(Omega_m=omm, Omega_de=omde, Omega_b=omb, h=h, n=ns, sigma8=sigma8, w0=w0, wa=0)
 
@@ -241,7 +243,7 @@ class TomographicCosmicShearPhotoz():
             p = self.pz[i](z+theta[i])
             p = p/np.trapz(p, z)
             pz_new[i] = interpolate.InterpolatedUnivariateSpline(z, p, k=3)
-        
+
         # Numerics parameters
         zmax = 2
         rmax = cosmo.a2chi(z2a(zmax))
@@ -278,7 +280,7 @@ class TomographicCosmicShearPhotoz():
         # Compute lensing weights...
 
         w = []
-        
+
         # Compute the weight function associated with each bin in turn, over r-points and then interpolate
         for i in range(0, self.nz):
 
@@ -298,7 +300,7 @@ class TomographicCosmicShearPhotoz():
             # Interpolate (generate interpolation function) and add interpolation function to the array w
             interp = interpolate.InterpolatedUnivariateSpline(rpoints, weight, k = 3)
             w.append(interp)
-        
+
         # Tensor for cls
         cls = np.zeros((self.n_ell_bins, self.nz, self.nz))
 
@@ -317,7 +319,7 @@ class TomographicCosmicShearPhotoz():
                     cls[L, i, j] = integrate.romb(intvals, dr)
                     cls[L, j, i] = cls[L, i, j]
             cls[L, :,:] = cls[L, :,:] + self.N
-                    
+
         return cls
 
     def compute_derivatives(self, theta_fiducial, h):
@@ -331,15 +333,15 @@ class TomographicCosmicShearPhotoz():
             theta_plus[i] += h[i]
             theta_minus = np.copy(theta_fiducial)
             theta_minus[i] -= h[i]
-            
+
             Cp = self.power_spectrum(theta_plus)
             Cm = self.power_spectrum(theta_minus)
-            
+
             dCdt[i, :, :, :] = (Cp - Cm)/(2*h[i])
-        
+
         # Derivatives wrt photo-z bias parameters
         for i in range(self.nz):
-            
+
             pzprime = [interpolate.InterpolatedUnivariateSpline(np.linspace(0, self.pz[0].get_knots()[-1], len(self.pz[0].get_knots())), np.zeros(len(self.pz[0].get_knots()))) for X in range(self.nz)]
             pzprime[i] = self.pz[i].derivative()
             dCdt[self.npar-self.nz+i, :, :, :] = self.d_power_spectrum_db(theta_fiducial, pzprime)
@@ -362,7 +364,7 @@ class TomographicCosmicShearPhotoz():
         hubble = h*100
         w0 = -1.
         wa = 0
-        
+
         # Initialize cosmology object
         cosmo = cosmology(Omega_m=omm, Omega_de=omde, Omega_b=omb, h=h, n=ns, sigma8=sigma8, w0=w0, wa=0)
 
@@ -419,7 +421,7 @@ class TomographicCosmicShearPhotoz():
                 dx = x[1] - x[0]
                 intvals = rpoints[j]*self.pz[i](z(x)) * h*cosmo.H(z2a(z(x))) * (1.0/hubble) * (x-rpoints[j])/x
                 weight[j] = integrate.romb(intvals, dx)
-                
+
                 x = np.linspace(rpoints[j], rmax, 2**6 + 1)
                 dx = x[1] - x[0]
                 intvals = rpoints[j]*pzprime[i](z(x)) * h*cosmo.H(z2a(z(x))) * (1.0/hubble) * (x-rpoints[j])/x
@@ -430,7 +432,7 @@ class TomographicCosmicShearPhotoz():
             w.append(interp)
             interp = interpolate.InterpolatedUnivariateSpline(rpoints, dweightdb, k = 3)
             dwdb.append(interp)
-        
+
         # Tensor for cls
         cls = np.zeros((self.n_ell_bins, self.nz, self.nz))
 
@@ -449,8 +451,5 @@ class TomographicCosmicShearPhotoz():
                     cls[L, i, j] = integrate.romb(intvals, dr)
                     cls[L, j, i] = cls[L, i, j]
             cls[L,:,:] = cls[L,:,:] + self.N
-                    
+
         return cls
-
-
-
