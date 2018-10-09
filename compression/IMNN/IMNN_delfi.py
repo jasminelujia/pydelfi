@@ -11,31 +11,24 @@ import pickle
 import tqdm
 
 def make_simulations_without_derivatives(sim_number, data_arrays):
-    print(sim_number)
+    #print(sim_number)
     theta = data_arrays[0]
-    der = data_arrays[1]
-    simulator = data_arrays[2]
-    simulator_args = data_arrays[3]
-    initial_sims = data_arrays[4]
-    partial_fraction = data_arrays[5]
+    simulator = data_arrays[1]
+    simulator_args = data_arrays[2]
     data = simulator(theta, simulator_args).flatten()
     data_test = simulator(theta, simulator_args).flatten()
     return data, data_test
 
 def make_simulations_with_derivatives(sim_number, data_arrays):
-    print(sim_number)
     theta = data_arrays[0]
     der = data_arrays[1]
     simulator = data_arrays[2]
     simulator_args = data_arrays[3]
-    initial_sims = data_arrays[4]
-    partial_fraction = data_arrays[5]
-    data = simulator(theta, simulator_args).flatten()
-    data_test = simulator(theta, simulator_args).flatten()
-    data_m = np.zeros((len(theta), data.shape[0]))
-    data_m_test = np.zeros((len(theta), data.shape[0]))
-    data_p = np.zeros((len(theta), data.shape[0]))
-    data_p_test = np.zeros((len(theta), data.shape[0]))
+    shape = data_arrays[4]
+    data_m = np.zeros([len(theta)] + shape)
+    data_m_test = np.zeros([len(theta)] + shape)
+    data_p = np.zeros([len(theta)] + shape)
+    data_p_test = np.zeros([len(theta)] + shape)
     for param in range(len(theta)):
         seed = np.random.randint(1e6)
         theta_m = np.copy(theta)
@@ -48,7 +41,8 @@ def make_simulations_with_derivatives(sim_number, data_arrays):
         np.random.seed(seed)
         data_p[param] = simulator(theta_p, simulator_args).flatten()
         data_p_test[param] = simulator(theta_p, simulator_args).flatten()
-    return data, data_test, data_m, data_m_test, data_p, data_p_test
+        print(theta_m, theta, theta_p)
+    return data_m, data_m_test, data_p, data_p_test
 
 def get_network(simulator, simulator_args, theta, der, initial_sims, filename, make_simulations = True):
 
@@ -63,24 +57,20 @@ def get_network(simulator, simulator_args, theta, der, initial_sims, filename, m
         data_test = np.zeros([initial_sims] + list(first.shape))
         data_m_test = np.zeros([int(initial_sims * partial_fraction), len(theta)] + list(first.shape))
         data_p_test = np.zeros([int(initial_sims * partial_fraction), len(theta)] + list(first.shape))
-        print(data.shape, data_test.shape, data_m.shape, data_m_test.shape, data_p.shape, data_p_test.shape)
         pool = Pool(os.cpu_count())
-        print("Doing derivatives")
-        result = pool.map(partial(make_simulations_with_derivatives, data_arrays = [theta, der, simulator, simulator_args, initial_sims, partial_fraction]), np.arange(int(initial_sims * partial_fraction)))
-        print("Done derivatives")
-        for i in tqdm.trange(int(initial_sims * partial_fraction)):
-            data[i] = result[i][0]
-            data_test[i] = result[i][1]
-            data_m[i] = result[i][2]
-            data_m_test[i] = result[i][3]
-            data_p[i] = result[i][4]
-            data_p_test[i] = result[i][5]
-        print("Doing fiducials")
-        result = pool.map(partial(make_simulations_without_derivatives, data_arrays = [theta, der, simulator, simulator_args, initial_sims, partial_fraction]), np.arange(int(initial_sims * partial_fraction), initial_sims))
-        print("Done fiducials")
-        for i in tqdm.trange(initial_sims - int(initial_sims * partial_fraction)):
-            data[i + int(initial_sims * partial_fraction)] = result[i][0]
-            data_test[i + int(initial_sims * partial_fraction)] = result[i][1]
+        counter = 0
+        for i in tqdm.tqdm(pool.imap_unordered(partial(make_simulations_with_derivatives, data_arrays = [theta, der, simulator, simulator_args, list(first.shape)]), np.arange(int(initial_sims * partial_fraction))), desc = "Derivative simulations", total = int(initial_sims * partial_fraction)):
+            data_m[counter] = i[0]
+            data_m_test[counter] = i[1]
+            data_p[counter] = i[2]
+            data_p_test[counter] = i[3]
+            counter += 1
+        counter = 0
+        for i in tqdm.tqdm(pool.imap_unordered(partial(make_simulations_without_derivatives, data_arrays = [theta, simulator, simulator_args]), np.arange(int(initial_sims * partial_fraction), initial_sims)), desc = "Fiducial simulations", total = initial_sims):
+            data[counter] = i[0]
+            data_test[counter] = i[1]
+            counter += 1
+
         pool.close()
 
         data = {'x_central': np.array(data),

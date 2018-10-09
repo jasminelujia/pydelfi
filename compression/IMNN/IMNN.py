@@ -519,7 +519,7 @@ class IMNN():
         iF = tf.matrix_inverse(n.test_F)
         return tf.expand_dims(n.θ_fid, 0) + tf.einsum("ij,kj->ki", iF, tf.einsum("ij,kj->ki", tf.einsum("ij,kj->ki", n.test_iC, n.test_dμdθ), n.output - tf.expand_dims(n.test_μ, 0)))
 
-    def loss(n, F):
+    def loss(n, F, C):
         # CALCULATE THE LOSS FUNCTION
         #______________________________________________________________
         # CALLED FROM (DEFINED IN IMNN.py)
@@ -537,12 +537,15 @@ class IMNN():
         # IFI                           tensor    - determinant of the Fisher information matrix
         #______________________________________________________________
         #Fλ, Fv = tf.self_adjoint_eig(tf.expand_dims(F, 0))
-        #F_out = tf.log(tf.reduce_sum(Fλ))
-        #return tf.multiply(tf.constant(-0.5, dtype = n._FLOATX), tf.square(F_out))
+        #F_out = tf.reduce_sum(Fλ)
+        #Cλ, Cv = tf.self_adjoint_eig(tf.expand_dims(C, 0))
+        #C_out = tf.reduce_sum(Cλ)
+        #return tf.multiply(tf.constant(-0.5, dtype = n._FLOATX), tf.square(F_out)) + C_out
         #IFI = tf.matrix_determinant(F)
         #return tf.multiply(tf.constant(-0.5, dtype = n._FLOATX), tf.square(IFI))
         logIFI = tf.linalg.slogdet(F)
-        return tf.multiply(tf.constant(-0.5, dtype = n._FLOATX), tf.square(logIFI[0] * logIFI[1]))
+        logICI = tf.linalg.slogdet(C)
+        return tf.multiply(tf.constant(-0.5, dtype = n._FLOATX), tf.square(logIFI[0] * logIFI[1]))# + tf.abs(logICI[0] * logICI[1])
 
     def setup(n, η, network = None):
         # SETS UP GENERIC NETWORK
@@ -679,14 +682,14 @@ class IMNN():
         n.C = tf.identity(C, name = 'covariance')
         n.μ = tf.identity(μ, name = 'mean')
         n.dμdθ = tf.identity(dμdθ, name = 'mean_derivative')
-        n.Λ = tf.identity(n.loss(n.F), name = 'loss')
+        n.Λ = tf.identity(n.loss(n.F, n.C), name = 'loss')
         test_F, test_iC, test_μ, test_dμdθ, test_C  = n.Fisher(test_output_central, test_output_m, test_output_p)
         n.test_F = tf.identity(test_F, name = "test_F")
         n.test_iC = tf.identity(test_iC, name = 'test_inverse_covariance')
         n.test_C = tf.identity(test_C, name = 'test_covariance')
         n.test_μ = tf.identity(test_μ, name = 'test_mean')
         n.test_dμdθ = tf.identity(test_dμdθ, name = 'test_mean_derivative')
-        n.test_Λ = tf.identity(n.loss(n.test_F), name = 'test_loss')
+        n.test_Λ = tf.identity(n.loss(n.test_F, n.test_C), name = 'test_loss')
         if n.get_MLE:
             n.MLE = tf.identity(n.maximum_likelihood_estimate(), name = "maximum_likelihood_estimate")
             if n.verbose: print(n.MLE)
@@ -805,9 +808,11 @@ class IMNN():
                 for combination in range(n_train):
                     n.sess.run(n.backpropagate, feed_dict = {n.x_central: data['x_central'][central_indices[combination * n.n_s: (combination + 1) * n.n_s]], n.x_m: data['x_m'][derivative_indices[combination * n.n_p: (combination + 1) * n.n_p]], n.x_p: data['x_p'][derivative_indices[combination * n.n_p: (combination + 1) * n.n_p]], n.dropout: keep_rate})
                 train_F = n.sess.run(n.F, feed_dict = {n.x_central: data['x_central'][central_indices[combination * n.n_s: (combination + 1) * n.n_s]], n.x_m: data['x_m'][derivative_indices[combination * n.n_p: (combination + 1) * n.n_p]], n.x_p: data['x_p'][derivative_indices[combination * n.n_p: (combination + 1) * n.n_p]], n.dropout: 1.})
-            detF = np.linalg.slogdet(train_F)
             n.history["F"].append(train_F)
-            n.history["det(F)"].append(detF[0] * detF[1])
+            detF = np.linalg.det(train_F)
+            n.history["det(F)"].append(detF)
+            #detF = np.linalg.slogdet(train_F)
+            #n.history["det(F)"].append(detF[0] * detF[1])
             if history:
                 if test:
                     if n.x_central.op.type != 'Placeholder':
@@ -815,35 +820,45 @@ class IMNN():
                     else:
                         μ, C, iC, dμdθ, Λ, test_F, test_μ, test_C, test_iC, test_dμdθ, test_Λ = n.sess.run([n.μ, n.C, n.iC, n.dμdθ, n.Λ, n.test_F, n.test_μ, n.test_C, n.test_iC, n.test_dμdθ, n.test_Λ], feed_dict = {n.x_central: data['x_central_test'], n.x_m: data['x_m_test'], n.x_p: data['x_p_test'], n.dropout: 1.})
                     n.history["test F"].append(test_F)
-                    dettestF = np.linalg.slogdet(test_F)
-                    n.history["det(test F)"].append(dettestF[0] * dettestF[1])
+                    dettestF = np.linalg.det(test_F)
+                    n.history["det(test F)"].append(dettestF)
+                    #dettestF = np.linalg.slogdet(test_F)
+                    #n.history["det(test F)"].append(dettestF[0] * dettestF[1])
                     n.history["test μ"].append(test_μ)
                     n.history["test C"].append(test_C)
-                    dettestC = np.linalg.slogdet(test_C)
-                    n.history["det(test C)"].append(dettestC[0] * dettestC[1])
+                    dettestC = np.linalg.det(test_C)
+                    n.history["det(test C)"].append(dettestC)
+                    #dettestC = np.linalg.slogdet(test_C)
+                    #n.history["det(test C)"].append(dettestC[0] * dettestC[1])
                     n.history["test iC"].append(test_iC)
-                    dettestiC = np.linalg.slogdet(test_iC)
-                    n.history["det(test iC)"].append(dettestiC[0] * dettestiC[1])
+                    dettestiC = np.linalg.det(test_iC)
+                    n.history["det(test iC)"].append(dettestiC)
+                    #dettestiC = np.linalg.slogdet(test_iC)
+                    #n.history["det(test iC)"].append(dettestiC[0] * dettestiC[1])
                     n.history["test dμdθ"].append(test_dμdθ)
                     n.history["test Λ"].append(test_Λ)
-                    tq.set_postfix(lndetF = n.history["det(F)"][-1], lndetF_test = n.history["det(test F)"][-1])
+                    tq.set_postfix(detF = n.history["det(F)"][-1], lndetF_test = n.history["det(test F)"][-1])
                 else:
                     if n.x_central.op.type != 'Placeholder':
                         μ, C, iC, dμdθ, Λ = n.sess.run([n.μ, n.C, n.iC, n.dμdθ, n.Λ], feed_dict = {n.central_indices: central_indices[combination * n.n_s: (combination + 1) * n.n_s].reshape((n.n_s, 1)), n.derivative_indices: derivative_indices[combination * n.n_p: (combination + 1) * n.n_p].reshape((n.n_p, 1)), n.dropout: 1.})
                     else:
                         μ, C, iC, dμdθ, Λ = n.sess.run([n.μ, n.C, n.iC, n.dμdθ, n.Λ], feed_dict = {n.x_central: data['x_central'][central_indices[combination * n.n_s: (combination + 1) * n.n_s]], n.x_m: data['x_m'][derivative_indices[combination * n.n_p: (combination + 1) * n.n_p]], n.x_p: data['x_p'][derivative_indices[combination * n.n_p: (combination + 1) * n.n_p]], n.dropout: 1.})
-                    tq.set_postfix(lndetF = n.history["det(F)"][-1])
+                    tq.set_postfix(detF = n.history["det(F)"][-1])
                 n.history["μ"].append(μ)
                 n.history["C"].append(C)
-                detC = np.linalg.slogdet(C)
-                n.history["det(C)"].append(detC[0] * detC[1])
+                detC = np.linalg.det(C)
+                n.history["det(C)"].append(detC)
+                #detC = np.linalg.slogdet(C)
+                #n.history["det(C)"].append(detC[0] * detC[1])
                 n.history["iC"].append(iC)
-                detiC = np.linalg.slogdet(iC)
-                n.history["det(iC)"].append(detiC[0] * detiC[1])
+                detiC = np.linalg.det(iC)
+                n.history["det(iC)"].append(detiC)
+                #detiC = np.linalg.slogdet(iC)
+                #n.history["det(iC)"].append(detiC[0] * detiC[1])
                 n.history["dμdθ"].append(dμdθ)
                 n.history["Λ"].append(Λ)
             else:
-                tq.set_postfix(lndetF = n.history["det(F)"][-1])
+                tq.set_postfix(detF = n.history["det(F)"][-1])
         if n.save_file is not None:
             n.save_network()
 

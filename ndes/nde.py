@@ -4,7 +4,7 @@ import getdist
 from getdist import plots, MCSamples
 import emcee
 import matplotlib.pyplot as plt
-from tqdm import tnrange, tqdm
+from tqdm import trange, tqdm
 import distributions.priors as priors
 
 class DelfiMixtureDensityNetwork():
@@ -350,7 +350,8 @@ class DelfiMixtureDensityNetwork():
 
             # Sample parameters from some broad proposal
             ps = np.zeros((n_batch, self.npar))
-            for i in range(0, n_batch):
+            pbar = trange(n_batch, desc = "Pretraining data")
+            for i in pbar:
                 ps[i,:] = (proposal.draw() - self.theta_fiducial)/self.fisher_errors
 
             # Sample data assuming a Gaussian likelihood
@@ -501,7 +502,7 @@ class DelfiMixtureDensityNetwork():
                 add_extra_test = False
 
         # Train for epochs number of epochs
-        tr_epoch = tnrange(epochs, desc = "Epochs")
+        tr_epoch = trange(epochs, desc = "Epochs")
         for epoch in tr_epoch:
 
             # Shuffle the training indices at the start of each epoch so batches are different
@@ -515,8 +516,9 @@ class DelfiMixtureDensityNetwork():
                 num_training_batch = training_batch_num + 1
             else:
                 num_training_batch = training_batch_num
-            tr_batch = tnrange(num_training_batch, desc = "Batches")
-            for batch in tr_batch:
+            #tr_batch = trange(num_training_batch, desc = "Batches")
+            #for batch in tr_batch:
+            for batch in range(num_training_batch):
                 # Train on left over simulations (which didn't fit into batch_size)
                 if batch == training_batch_num:
                     _, loss = self.sess.run([self.train, self.neg_log_normal_mixture_likelihood], feed_dict = {self.parameter: input[training_indices[training_batch_num * batch_size:]].reshape((len(training_indices[training_batch_num * batch_size:]), self.npar)), self.true: true[training_indices[training_batch_num * batch_size:]].reshape((len(training_indices[training_batch_num * batch_size:]), self.npar)), self.ϵ:epsilon})
@@ -548,9 +550,9 @@ class DelfiMixtureDensityNetwork():
                         # If not validating, return nan
                         val_loss = np.nan
                     # Update progress bar
-                    tr_batch.set_postfix(loss=loss, val_loss=np.mean(val_loss))
+                    tr_epoch.set_postfix(loss=loss, val_loss=np.mean(val_loss))
                 else:
-                    tr_batch.set_postfix(loss=loss)
+                    tr_epoch.set_postfix(loss=loss)
             # Add loss of final batch and mean of all batches of validation loss to the history container at the end of each epoch
             history["loss"].append(loss)
             history["val_loss"].append(np.mean(val_loss))
