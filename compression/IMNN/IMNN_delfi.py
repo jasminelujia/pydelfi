@@ -117,12 +117,12 @@ def get_network(simulator, simulator_args, simulation_shape, theta, der, initial
         }
 
     n = IMNN.IMNN(parameters = parameters)
-    η = 1e-1
+    η = 1e-2
     n.setup(η = η)
     return n
 
 def train_IMNN(n, num_epochs):
-    n.train(num_epochs = num_epochs, n_train = 1, keep_rate = 0.8)
+    n.train(num_epochs = num_epochs, n_train = 1, keep_rate = 1.)
 
 def IMNN_compressor(data, n):
     data = data.reshape((1, data.shape[0]))
