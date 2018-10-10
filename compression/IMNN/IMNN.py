@@ -397,6 +397,8 @@ class IMNN():
         outmm = tf.subtract(a_, tf.expand_dims(μ, 0), name = 'central_difference_from_mean')
         if n.verbose: print(outmm)
         C = tf.divide(tf.einsum('ij,ik->jk', outmm, outmm), tf.constant((n.n_s - 1.), dtype = n._FLOATX), name = 'central_covariance')
+        C = tf.matrix_band_part(C, 0, -1)
+        C = 0.5 * (C + tf.transpose(C))
         if n.verbose: print(C)
         iC = tf.matrix_band_part(tf.matrix_inverse(C, name = 'inverse_central_covariance'), 0, -1)
         iC = 0.5 * (iC + tf.transpose(iC))
@@ -544,8 +546,8 @@ class IMNN():
         #IFI = tf.matrix_determinant(F)
         #return tf.multiply(tf.constant(-0.5, dtype = n._FLOATX), tf.square(IFI))
         logIFI = tf.linalg.slogdet(F)
-        logICI = tf.linalg.slogdet(C)
-        return tf.multiply(tf.constant(-0.5, dtype = n._FLOATX), tf.square(logIFI[0] * logIFI[1])) + tf.abs(logICI[0] * logICI[1])
+        #logICI = tf.linalg.slogdet(C)
+        return tf.multiply(tf.constant(-0.5, dtype = n._FLOATX), tf.square(logIFI[0] * logIFI[1]))# + tf.abs(logICI[0] * logICI[1])
 
     def setup(n, η, network = None):
         # SETS UP GENERIC NETWORK
@@ -719,7 +721,7 @@ class IMNN():
         n.backpropagate = tf.train.AdamOptimizer(η).minimize(n.Λ)
         #n.backpropagate = tf.train.GradientDescentOptimizer(η).minimize(n.loss(n.F))
 
-    def train(n, num_epochs, n_train, keep_rate, history = True, data = None):
+    def train(n, num_epochs, n_train, keep_rate, history = True, data = None, to_continue = False):
         # TRAIN INFORMATION MAXIMISING NEURAL NETWORK
         #______________________________________________________________
         # RETURNS
@@ -767,30 +769,38 @@ class IMNN():
         n_train = utils.utils().positive_integer(n_train, key = 'number of combinations')
         keep_rate = utils.utils().constrained_float(keep_rate, key = 'dropout')
 
-        n.history = {}
-        n.history["F"] = []
-        n.history["det(F)"] = []
-        if history:
-            n.history["Λ"] = []
-            n.history["μ"] = []
-            n.history["C"] = []
-            n.history["det(C)"] = []
-            n.history["iC"] = []
-            n.history["det(iC)"] = []
-            n.history["dμdθ"] = []
+        if not to_continue:
+            n.history = {}
+            n.history["F"] = []
+            n.history["det(F)"] = []
+            if history:
+                n.history["Λ"] = []
+                n.history["μ"] = []
+                n.history["C"] = []
+                n.history["det(C)"] = []
+                n.history["iC"] = []
+                n.history["det(iC)"] = []
+                n.history["dμdθ"] = []
+                if n.x_central.op.type != 'Placeholder':
+                    data = n.preload_data
+                if 'x_central_test' in data.keys():
+                    test = True
+                    n.history["test F"] = []
+                    n.history["det(test F)"] = []
+                    n.history["test Λ"] = []
+                    n.history["test μ"] = []
+                    n.history["test C"] = []
+                    n.history["det(test C)"] = []
+                    n.history["test iC"] = []
+                    n.history["det(test iC)"] = []
+                    n.history["test dμdθ"] = []
+                else:
+                    test = False
+        else:
             if n.x_central.op.type != 'Placeholder':
                 data = n.preload_data
             if 'x_central_test' in data.keys():
                 test = True
-                n.history["test F"] = []
-                n.history["det(test F)"] = []
-                n.history["test Λ"] = []
-                n.history["test μ"] = []
-                n.history["test C"] = []
-                n.history["det(test C)"] = []
-                n.history["test iC"] = []
-                n.history["det(test iC)"] = []
-                n.history["test dμdθ"] = []
             else:
                 test = False
 

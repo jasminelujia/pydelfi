@@ -28,6 +28,7 @@ def make_simulations_with_derivatives(sim_number, data_arrays):
     data_m_test = np.zeros([len(theta)] + shape)
     data_p = np.zeros([len(theta)] + shape)
     data_p_test = np.zeros([len(theta)] + shape)
+    np.random.seed()
     seed_1 = np.random.randint(1e6)
     seed_2 = np.random.randint(1e6)
     for param in range(len(theta)):
@@ -117,12 +118,12 @@ def get_network(simulator, simulator_args, simulation_shape, theta, der, initial
         }
 
     n = IMNN.IMNN(parameters = parameters)
-    η = 1e-2
+    η = 1e-1
     n.setup(η = η)
     return n
 
-def train_IMNN(n, num_epochs):
-    n.train(num_epochs = num_epochs, n_train = 1, keep_rate = 1.)
+def train_IMNN(n, num_epochs, to_continue = False):
+    n.train(num_epochs = num_epochs, n_train = 1, keep_rate = 1., to_continue = to_continue)
 
 def IMNN_compressor(data, n):
     data = data.reshape((1, data.shape[0]))
