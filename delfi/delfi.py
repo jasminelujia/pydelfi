@@ -12,7 +12,7 @@ class Delfi():
 
     def __init__(self, data, prior, nde, \
                  Finv, theta_fiducial, param_limits = None, param_names=None, nwalkers=100, \
-                 posterior_chain_length=100, proposal_chain_length=100, \
+                 posterior_chain_length=1000, proposal_chain_length=100, \
                  rank=0, n_procs=1, comm=None, red_op=None, \
                  show_plot=True, results_dir = "", seed_generator = None):
         
