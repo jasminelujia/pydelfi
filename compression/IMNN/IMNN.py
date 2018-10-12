@@ -197,40 +197,43 @@ class IMNN():
         if n.save_file is not None:
             config = tf.ConfigProto()
             config.gpu_options.allow_growth = True
-            n.sess = tf.Session(config = config)
-            loader = tf.train.import_meta_graph("./" + n.save_file + ".meta")
-            loader.restore(n.sess, n.save_file)
-            n.x = tf.get_default_graph().get_tensor_by_name("x:0")
-            n.x_central = tf.get_default_graph().get_tensor_by_name("x_central:0")
-            n.x_m = tf.get_default_graph().get_tensor_by_name("x_m:0")
-            n.x_p = tf.get_default_graph().get_tensor_by_name("x_p:0")
-            n.θ_fid = tf.get_default_graph().get_tensor_by_name("fiducial:0")
-            n.prior = tf.get_default_graph().get_tensor_by_name("prior:0")
-            n.dd = tf.get_default_graph().get_tensor_by_name("dd:0")
-            n.dropout = tf.get_default_graph().get_tensor_by_name("dropout:0")
-            n.output = tf.get_default_graph().get_tensor_by_name("output:0")
-            n.F = tf.get_default_graph().get_tensor_by_name("fisher_information:0")
-            n.C = tf.get_default_graph().get_tensor_by_name("covariance:0")
-            n.iC = tf.get_default_graph().get_tensor_by_name("inverse_covariance:0")
-            n.μ = tf.get_default_graph().get_tensor_by_name("mean:0")
-            n.dμdθ = tf.get_default_graph().get_tensor_by_name("mean_derivative:0")
-            n.Λ = tf.get_default_graph().get_tensor_by_name("loss:0")
-            n.test_F = tf.get_default_graph().get_tensor_by_name("test_F:0")
-            n.test_C = tf.get_default_graph().get_tensor_by_name("test_covariance:0")
-            n.test_iC = tf.get_default_graph().get_tensor_by_name("test_inverse_covariance:0")
-            n.test_μ = tf.get_default_graph().get_tensor_by_name("test_mean:0")
-            n.test_dμdθ = tf.get_default_graph().get_tensor_by_name("test_mean_derivative:0")
-            n.test_Λ = tf.get_default_graph().get_tensor_by_name("test_loss:0")
-            if n.get_MLE:
-                n.MLE = tf.get_default_graph().get_tensor_by_name("maximum_likelihood_estimate:0")
-                n.AL = tf.get_default_graph().get_tensor_by_name("asymptotic_likelihood:0")
-            if "central_indices" in [v.name for v in n.sess.graph.get_operations()]:
-                n.central_indices = tf.get_default_graph().get_tensor_by_name("central_indices:0")
-                n.derivative_indices = tf.get_default_graph().get_tensor_by_name("derivative_indices:0")
-            #n.backpropagate = tf.get_default_graph().get_operation_by_name("GradientDescent")
-            n.backpropagate = tf.get_default_graph().get_operation_by_name("Adam")
+            n.graph = tf.Graph()
+            with n.graph.as_default():
+                n.sess = tf.Session(config = config)
+                loader = tf.train.import_meta_graph("./" + n.save_file + ".meta")
+                loader.restore(n.sess, n.save_file)
+                n.x = tf.get_default_graph().get_tensor_by_name("x:0")
+                n.x_central = tf.get_default_graph().get_tensor_by_name("x_central:0")
+                n.x_m = tf.get_default_graph().get_tensor_by_name("x_m:0")
+                n.x_p = tf.get_default_graph().get_tensor_by_name("x_p:0")
+                n.θ_fid = tf.get_default_graph().get_tensor_by_name("fiducial:0")
+                n.prior = tf.get_default_graph().get_tensor_by_name("prior:0")
+                n.dd = tf.get_default_graph().get_tensor_by_name("dd:0")
+                n.dropout = tf.get_default_graph().get_tensor_by_name("dropout:0")
+                n.output = tf.get_default_graph().get_tensor_by_name("output:0")
+                n.F = tf.get_default_graph().get_tensor_by_name("fisher_information:0")
+                n.C = tf.get_default_graph().get_tensor_by_name("covariance:0")
+                n.iC = tf.get_default_graph().get_tensor_by_name("inverse_covariance:0")
+                n.μ = tf.get_default_graph().get_tensor_by_name("mean:0")
+                n.dμdθ = tf.get_default_graph().get_tensor_by_name("mean_derivative:0")
+                n.Λ = tf.get_default_graph().get_tensor_by_name("loss:0")
+                n.test_F = tf.get_default_graph().get_tensor_by_name("test_F:0")
+                n.test_C = tf.get_default_graph().get_tensor_by_name("test_covariance:0")
+                n.test_iC = tf.get_default_graph().get_tensor_by_name("test_inverse_covariance:0")
+                n.test_μ = tf.get_default_graph().get_tensor_by_name("test_mean:0")
+                n.test_dμdθ = tf.get_default_graph().get_tensor_by_name("test_mean_derivative:0")
+                n.test_Λ = tf.get_default_graph().get_tensor_by_name("test_loss:0")
+                if n.get_MLE:
+                    n.MLE = tf.get_default_graph().get_tensor_by_name("maximum_likelihood_estimate:0")
+                    n.AL = tf.get_default_graph().get_tensor_by_name("asymptotic_likelihood:0")
+                if "central_indices" in [v.name for v in n.sess.graph.get_operations()]:
+                    n.central_indices = tf.get_default_graph().get_tensor_by_name("central_indices:0")
+                    n.derivative_indices = tf.get_default_graph().get_tensor_by_name("derivative_indices:0")
+                #n.backpropagate = tf.get_default_graph().get_operation_by_name("GradientDescent")
+                n.backpropagate = tf.get_default_graph().get_operation_by_name("Adam")
+                n.saver = tf.train.Saver()
 
-    def dense(n, input_tensor, l, dropout):
+    def dense(n, input_tensor, l, dropout, last_layer = False):
         # DENSE LAYER
         #______________________________________________________________
         # CALLED FROM (DEFINED IN IMNN.py)
@@ -268,10 +271,13 @@ class IMNN():
         weights = tf.get_variable("weights", weight_shape, initializer = tf.random_normal_initializer(0., n.wv))
         biases = tf.get_variable("biases", bias_shape, initializer = tf.constant_initializer(n.bb))
         dense = tf.add(tf.matmul(input_tensor, weights), biases)
-        if n.takes_α:
-            return tf.nn.dropout(n.activation(dense, n.α), dropout, name = 'dense_' + str(l))
+        if last_layer:
+            return tf.nn.tanh(dense, name = 'dense_' + str(l))
         else:
-            return tf.nn.dropout(n.activation(dense), dropout, name = 'dense_' + str(l))
+            if n.takes_α:
+                return tf.nn.dropout(n.activation(dense, n.α), dropout, name = 'dense_' + str(l))
+            else:
+                return tf.nn.dropout(n.activation(dense), dropout, name = 'dense_' + str(l))
 
     def conv(n, input_tensor, l, dropout):
         # CONVOLUTIONAL LAYER
@@ -351,8 +357,10 @@ class IMNN():
         for l in range(1, len(n.layers)):
             if l < len(n.layers) - 1:
                 drop_val = dropout
+                last_layer = False
             else:
                 drop_val = 1.
+                last_layer = True
             if type(n.layers[l]) == list:
                 if len(layer[-1].get_shape().as_list()) < 2:
                     layer.append(tf.reshape(layer[-1], (-1, layer[-1].get_shape().as_list()[-1], 1)))
@@ -362,7 +370,7 @@ class IMNN():
                 if len(layer[-1].get_shape()) > 2:
                     layer.append(tf.reshape(layer[-1], (-1, np.prod(layer[-1].get_shape().as_list()[1:]))))
                 with tf.variable_scope('layer_' + str(l)):
-                    layer.append(n.dense(layer[-1], l, drop_val))
+                    layer.append(n.dense(layer[-1], l, drop_val, last_layer = last_layer))
             if n.verbose: print(layer[-1])
         return layer[-1]
 
@@ -620,85 +628,87 @@ class IMNN():
         # MLE                         n tensor    - MLE of parameters
         # AL                          n tensor    - asymptotic likelihood at range of parameter values
         #______________________________________________________________
-        n.x = tf.placeholder(n._FLOATX, shape = [None] + n.inputs, name = "x")
-        if n.preload_data is not None:
-            n.central_indices = tf.placeholder(tf.int32, shape = [n.n_s, 1], name = "central_indices")
-            n.derivative_indices = tf.placeholder(tf.int32, shape = [n.n_p, 1], name = "derivative_indices")
-            n.x_central = tf.constant(n.preload_data["x_central"], dtype = n._FLOATX)
-            central_input = tf.gather_nd(n.x_central, n.central_indices)
-            n.x_m = tf.constant(n.preload_data["x_m"], dtype = n._FLOATX)
-            n.x_m = tf.stop_gradient(n.x_m)
-            derivative_input_m = tf.reshape(tf.gather_nd(n.x_m, n.derivative_indices), [n.n_p * n.n_params] + n.inputs)
-            n.x_p = tf.constant(n.preload_data["x_p"], dtype = n._FLOATX)
-            n.x_p = tf.stop_gradient(n.x_p)
-            derivative_input_p = tf.reshape(tf.gather_nd(n.x_p, n.derivative_indices), [n.n_p * n.n_params] + n.inputs)
-            if set(["x_central_test", "x_m_test", "x_p_test"]).issubset(n.preload_data.keys()):
-                test_input = tf.constant(n.preload_data["x_central_test"], dtype = n._FLOATX)
-                test_derivative_input_m = tf.reshape(tf.constant(n.preload_data["x_m_test"], dtype = n._FLOATX), [n.n_p * n.n_params] + n.inputs)
-                test_derivative_input_p = tf.reshape(tf.constant(n.preload_data["x_p_test"], dtype = n._FLOATX), [n.n_p * n.n_params] + n.inputs)
+        n.graph = tf.Graph()
+        with n.graph.as_default():
+            n.x = tf.placeholder(n._FLOATX, shape = [None] + n.inputs, name = "x")
+            if n.preload_data is not None:
+                n.central_indices = tf.placeholder(tf.int32, shape = [n.n_s, 1], name = "central_indices")
+                n.derivative_indices = tf.placeholder(tf.int32, shape = [n.n_p, 1], name = "derivative_indices")
+                n.x_central = tf.constant(n.preload_data["x_central"], dtype = n._FLOATX, name = "x_central")
+                central_input = tf.gather_nd(n.x_central, n.central_indices)
+                n.x_m = tf.constant(n.preload_data["x_m"], dtype = n._FLOATX, name = "x_m")
+                x_m = tf.stop_gradient(n.x_m)
+                derivative_input_m = tf.reshape(tf.gather_nd(x_m, n.derivative_indices), [n.n_p * n.n_params] + n.inputs)
+                n.x_p = tf.constant(n.preload_data["x_p"], dtype = n._FLOATX, name = "x_p")
+                x_p = tf.stop_gradient(n.x_p)
+                derivative_input_p = tf.reshape(tf.gather_nd(x_p, n.derivative_indices), [n.n_p * n.n_params] + n.inputs)
+                if set(["x_central_test", "x_m_test", "x_p_test"]).issubset(n.preload_data.keys()):
+                    test_input = tf.constant(n.preload_data["x_central_test"], dtype = n._FLOATX)
+                    test_derivative_input_m = tf.reshape(tf.constant(n.preload_data["x_m_test"], dtype = n._FLOATX), [n.n_p * n.n_params] + n.inputs)
+                    test_derivative_input_p = tf.reshape(tf.constant(n.preload_data["x_p_test"], dtype = n._FLOATX), [n.n_p * n.n_params] + n.inputs)
+                else:
+                    test_input = None
             else:
-                test_input = None
-        else:
-            n.x_central = tf.placeholder(n._FLOATX, shape = [n.n_s] + n.inputs, name = "x_central")
-            central_input = tf.identity(n.x_central)
-            n.x_m = tf.placeholder(n._FLOATX, shape = [n.n_p, n.n_params] + n.inputs, name = "x_m")
-            n.x_m = tf.stop_gradient(n.x_m)
-            derivative_input_m = tf.reshape(n.x_m, [n.n_p * n.n_params] + n.inputs)
-            n.x_p = tf.placeholder(n._FLOATX, shape = [n.n_p, n.n_params] + n.inputs, name = "x_p")
-            n.x_p = tf.stop_gradient(n.x_p)
-            derivative_input_p = tf.reshape(n.x_p, [n.n_p * n.n_params] + n.inputs)
-        if n.get_MLE:
-            n.prior = tf.placeholder(dtype = n._FLOATX, shape = [None, n.n_params, 1000], name = "prior")
-        n.θ_fid = tf.constant(n.fiducial_θ, dtype = n._FLOATX, name = "fiducial")
-        n.dd = tf.constant(n.derivative_denominator, dtype = n._FLOATX, name = "dd")
-        n.dropout = tf.placeholder(n._FLOATX, shape = (), name = "dropout")
-        if n.prebuild:
-            network = n.build_network
-        utils.utils().to_prebuild(network)
-        with tf.variable_scope("IMNN") as scope:
-            output = network(n.x, n.dropout)
-        n.output = tf.identity(output, name = "output")
-        if n.verbose: print(n.output)
-        with tf.variable_scope("IMNN") as scope:
-            scope.reuse_variables()
-            output_central = network(central_input, n.dropout)
-            scope.reuse_variables()
-            output_m = network(derivative_input_m, n.dropout)
-            scope.reuse_variables()
-            output_p = network(derivative_input_p, n.dropout)
-            if n.preload_data is not None and test_input is not None:
+                n.x_central = tf.placeholder(n._FLOATX, shape = [n.n_s] + n.inputs, name = "x_central")
+                central_input = tf.identity(n.x_central)
+                n.x_m = tf.placeholder(n._FLOATX, shape = [n.n_p, n.n_params] + n.inputs, name = "x_m")
+                x_m = tf.stop_gradient(n.x_m)
+                derivative_input_m = tf.reshape(x_m, [n.n_p * n.n_params] + n.inputs)
+                n.x_p = tf.placeholder(n._FLOATX, shape = [n.n_p, n.n_params] + n.inputs, name = "x_p")
+                x_p = tf.stop_gradient(n.x_p)
+                derivative_input_p = tf.reshape(x_p, [n.n_p * n.n_params] + n.inputs)
+            if n.get_MLE:
+                n.prior = tf.placeholder(dtype = n._FLOATX, shape = [None, n.n_params, 1000], name = "prior")
+            n.θ_fid = tf.constant(n.fiducial_θ, dtype = n._FLOATX, name = "fiducial")
+            n.dd = tf.constant(n.derivative_denominator, dtype = n._FLOATX, name = "dd")
+            n.dropout = tf.placeholder(n._FLOATX, shape = (), name = "dropout")
+            if n.prebuild:
+                network = n.build_network
+            utils.utils().to_prebuild(network)
+            with tf.variable_scope("IMNN") as scope:
+                output = network(n.x, n.dropout)
+            n.output = tf.identity(output, name = "output")
+            if n.verbose: print(n.output)
+            with tf.variable_scope("IMNN") as scope:
                 scope.reuse_variables()
-                test_output_central = network(test_input, 1.)
+                output_central = network(central_input, n.dropout)
                 scope.reuse_variables()
-                test_output_m = network(test_derivative_input_m, 1.)
+                output_m = network(derivative_input_m, n.dropout)
                 scope.reuse_variables()
-                test_output_p = network(test_derivative_input_p, 1.)
-            else:
-                test_output_central = output_central
-                test_output_m = output_m
-                test_output_p = output_p
-        F, iC, μ, dμdθ, C = n.Fisher(output_central, output_m, output_p)
-        n.F = tf.identity(F, name = 'fisher_information')
-        if n.verbose: print(n.F)
-        n.iC = tf.identity(iC, name = 'inverse_covariance')
-        n.C = tf.identity(C, name = 'covariance')
-        n.μ = tf.identity(μ, name = 'mean')
-        n.dμdθ = tf.identity(dμdθ, name = 'mean_derivative')
-        n.Λ = tf.identity(n.loss(n.F, n.C), name = 'loss')
-        test_F, test_iC, test_μ, test_dμdθ, test_C  = n.Fisher(test_output_central, test_output_m, test_output_p)
-        n.test_F = tf.identity(test_F, name = "test_F")
-        n.test_iC = tf.identity(test_iC, name = 'test_inverse_covariance')
-        n.test_C = tf.identity(test_C, name = 'test_covariance')
-        n.test_μ = tf.identity(test_μ, name = 'test_mean')
-        n.test_dμdθ = tf.identity(test_dμdθ, name = 'test_mean_derivative')
-        n.test_Λ = tf.identity(n.loss(n.test_F, n.test_C), name = 'test_loss')
-        if n.get_MLE:
-            n.MLE = tf.identity(n.maximum_likelihood_estimate(), name = "maximum_likelihood_estimate")
-            if n.verbose: print(n.MLE)
-            n.AL = tf.identity(n.calculate_asymptotic_likelihood(), name = "asymptotic_likelihood")
-            if n.verbose: print(n.AL)
-        n.training_scheme(η)
-        n.begin_session()
+                output_p = network(derivative_input_p, n.dropout)
+                if n.preload_data is not None and test_input is not None:
+                    scope.reuse_variables()
+                    test_output_central = network(test_input, 1.)
+                    scope.reuse_variables()
+                    test_output_m = network(test_derivative_input_m, 1.)
+                    scope.reuse_variables()
+                    test_output_p = network(test_derivative_input_p, 1.)
+                else:
+                    test_output_central = output_central
+                    test_output_m = output_m
+                    test_output_p = output_p
+            F, iC, μ, dμdθ, C = n.Fisher(output_central, output_m, output_p)
+            n.F = tf.identity(F, name = 'fisher_information')
+            if n.verbose: print(n.F)
+            n.iC = tf.identity(iC, name = 'inverse_covariance')
+            n.C = tf.identity(C, name = 'covariance')
+            n.μ = tf.identity(μ, name = 'mean')
+            n.dμdθ = tf.identity(dμdθ, name = 'mean_derivative')
+            n.Λ = tf.identity(n.loss(n.F, n.C), name = 'loss')
+            test_F, test_iC, test_μ, test_dμdθ, test_C  = n.Fisher(test_output_central, test_output_m, test_output_p)
+            n.test_F = tf.identity(test_F, name = "test_F")
+            n.test_iC = tf.identity(test_iC, name = 'test_inverse_covariance')
+            n.test_C = tf.identity(test_C, name = 'test_covariance')
+            n.test_μ = tf.identity(test_μ, name = 'test_mean')
+            n.test_dμdθ = tf.identity(test_dμdθ, name = 'test_mean_derivative')
+            n.test_Λ = tf.identity(n.loss(n.test_F, n.test_C), name = 'test_loss')
+            if n.get_MLE:
+                n.MLE = tf.identity(n.maximum_likelihood_estimate(), name = "maximum_likelihood_estimate")
+                if n.verbose: print(n.MLE)
+                n.AL = tf.identity(n.calculate_asymptotic_likelihood(), name = "asymptotic_likelihood")
+                if n.verbose: print(n.AL)
+            n.training_scheme(η)
+            n.begin_session()
 
     def training_scheme(n, η):
         # MINIMISATION SCHEME FOR BACKPROPAGATION
@@ -769,108 +779,109 @@ class IMNN():
         n_train = utils.utils().positive_integer(n_train, key = 'number of combinations')
         keep_rate = utils.utils().constrained_float(keep_rate, key = 'dropout')
 
-        if not to_continue:
-            n.history = {}
-            n.history["F"] = []
-            n.history["det(F)"] = []
-            if history:
-                n.history["Λ"] = []
-                n.history["μ"] = []
-                n.history["C"] = []
-                n.history["det(C)"] = []
-                n.history["iC"] = []
-                n.history["det(iC)"] = []
-                n.history["dμdθ"] = []
+        with n.graph.as_default():
+            if not to_continue:
+                n.history = {}
+                n.history["F"] = []
+                n.history["det(F)"] = []
+                if history:
+                    n.history["Λ"] = []
+                    n.history["μ"] = []
+                    n.history["C"] = []
+                    n.history["det(C)"] = []
+                    n.history["iC"] = []
+                    n.history["det(iC)"] = []
+                    n.history["dμdθ"] = []
+                    if n.x_central.op.type != 'Placeholder':
+                        data = n.preload_data
+                    if 'x_central_test' in data.keys():
+                        test = True
+                        n.history["test F"] = []
+                        n.history["det(test F)"] = []
+                        n.history["test Λ"] = []
+                        n.history["test μ"] = []
+                        n.history["test C"] = []
+                        n.history["det(test C)"] = []
+                        n.history["test iC"] = []
+                        n.history["det(test iC)"] = []
+                        n.history["test dμdθ"] = []
+                    else:
+                        test = False
+            else:
                 if n.x_central.op.type != 'Placeholder':
                     data = n.preload_data
                 if 'x_central_test' in data.keys():
                     test = True
-                    n.history["test F"] = []
-                    n.history["det(test F)"] = []
-                    n.history["test Λ"] = []
-                    n.history["test μ"] = []
-                    n.history["test C"] = []
-                    n.history["det(test C)"] = []
-                    n.history["test iC"] = []
-                    n.history["det(test iC)"] = []
-                    n.history["test dμdθ"] = []
                 else:
                     test = False
-        else:
-            if n.x_central.op.type != 'Placeholder':
-                data = n.preload_data
-            if 'x_central_test' in data.keys():
-                test = True
-            else:
-                test = False
 
-        central_indices = np.arange(n.n_s * n_train)
-        derivative_indices = np.arange(n.n_p * n_train)
-        tq = tqdm.trange(num_epochs)
-        for epoch in tq:
-            np.random.shuffle(central_indices)
-            np.random.shuffle(derivative_indices)
-            if n.x_central.op.type != 'Placeholder':
-                for combination in range(n_train):
-                    n.sess.run(n.backpropagate, feed_dict = {n.central_indices: central_indices[combination * n.n_s: (combination + 1) * n.n_s].reshape((n.n_s, 1)), n.derivative_indices: derivative_indices[combination * n.n_p: (combination + 1) * n.n_p].reshape((n.n_p, 1)), n.dropout: keep_rate})
-                train_F = n.sess.run(n.F, feed_dict = {n.central_indices: central_indices[combination * n.n_s: (combination + 1) * n.n_s].reshape((n.n_s, 1)), n.derivative_indices: derivative_indices[combination * n.n_p: (combination + 1) * n.n_p].reshape((n.n_p, 1)), n.dropout: 1.})
-            else:
-                for combination in range(n_train):
-                    n.sess.run(n.backpropagate, feed_dict = {n.x_central: data['x_central'][central_indices[combination * n.n_s: (combination + 1) * n.n_s]], n.x_m: data['x_m'][derivative_indices[combination * n.n_p: (combination + 1) * n.n_p]], n.x_p: data['x_p'][derivative_indices[combination * n.n_p: (combination + 1) * n.n_p]], n.dropout: keep_rate})
-                train_F = n.sess.run(n.F, feed_dict = {n.x_central: data['x_central'][central_indices[combination * n.n_s: (combination + 1) * n.n_s]], n.x_m: data['x_m'][derivative_indices[combination * n.n_p: (combination + 1) * n.n_p]], n.x_p: data['x_p'][derivative_indices[combination * n.n_p: (combination + 1) * n.n_p]], n.dropout: 1.})
-            n.history["F"].append(train_F)
-            detF = np.linalg.det(train_F)
-            n.history["det(F)"].append(detF)
-            #detF = np.linalg.slogdet(train_F)
-            #n.history["det(F)"].append(detF[0] * detF[1])
-            if history:
-                if test:
-                    if n.x_central.op.type != 'Placeholder':
-                        μ, C, iC, dμdθ, Λ, test_F, test_μ, test_C, test_iC, test_dμdθ, test_Λ = n.sess.run([n.μ, n.C, n.iC, n.dμdθ, n.Λ, n.test_F, n.test_μ, n.test_C, n.test_iC, n.test_dμdθ, n.test_Λ], feed_dict = {n.central_indices: central_indices[combination * n.n_s: (combination + 1) * n.n_s].reshape((n.n_s, 1)), n.derivative_indices: derivative_indices[combination * n.n_p: (combination + 1) * n.n_p].reshape((n.n_p, 1)), n.dropout: 1.})
-                    else:
-                        μ, C, iC, dμdθ, Λ, test_F, test_μ, test_C, test_iC, test_dμdθ, test_Λ = n.sess.run([n.μ, n.C, n.iC, n.dμdθ, n.Λ, n.test_F, n.test_μ, n.test_C, n.test_iC, n.test_dμdθ, n.test_Λ], feed_dict = {n.x_central: data['x_central_test'], n.x_m: data['x_m_test'], n.x_p: data['x_p_test'], n.dropout: 1.})
-                    n.history["test F"].append(test_F)
-                    dettestF = np.linalg.det(test_F)
-                    n.history["det(test F)"].append(dettestF)
-                    #dettestF = np.linalg.slogdet(test_F)
-                    #n.history["det(test F)"].append(dettestF[0] * dettestF[1])
-                    n.history["test μ"].append(test_μ)
-                    n.history["test C"].append(test_C)
-                    dettestC = np.linalg.det(test_C)
-                    n.history["det(test C)"].append(dettestC)
-                    #dettestC = np.linalg.slogdet(test_C)
-                    #n.history["det(test C)"].append(dettestC[0] * dettestC[1])
-                    n.history["test iC"].append(test_iC)
-                    dettestiC = np.linalg.det(test_iC)
-                    n.history["det(test iC)"].append(dettestiC)
-                    #dettestiC = np.linalg.slogdet(test_iC)
-                    #n.history["det(test iC)"].append(dettestiC[0] * dettestiC[1])
-                    n.history["test dμdθ"].append(test_dμdθ)
-                    n.history["test Λ"].append(test_Λ)
-                    tq.set_postfix(detF = n.history["det(F)"][-1], lndetF_test = n.history["det(test F)"][-1])
+            central_indices = np.arange(n.n_s * n_train)
+            derivative_indices = np.arange(n.n_p * n_train)
+            tq = tqdm.trange(num_epochs)
+            for epoch in tq:
+                np.random.shuffle(central_indices)
+                np.random.shuffle(derivative_indices)
+                if n.x_central.op.type != 'Placeholder':
+                    for combination in range(n_train):
+                        n.sess.run(n.backpropagate, feed_dict = {n.central_indices: central_indices[combination * n.n_s: (combination + 1) * n.n_s].reshape((n.n_s, 1)), n.derivative_indices: derivative_indices[combination * n.n_p: (combination + 1) * n.n_p].reshape((n.n_p, 1)), n.dropout: keep_rate})
+                    train_F = n.sess.run(n.F, feed_dict = {n.central_indices: central_indices[combination * n.n_s: (combination + 1) * n.n_s].reshape((n.n_s, 1)), n.derivative_indices: derivative_indices[combination * n.n_p: (combination + 1) * n.n_p].reshape((n.n_p, 1)), n.dropout: 1.})
                 else:
-                    if n.x_central.op.type != 'Placeholder':
-                        μ, C, iC, dμdθ, Λ = n.sess.run([n.μ, n.C, n.iC, n.dμdθ, n.Λ], feed_dict = {n.central_indices: central_indices[combination * n.n_s: (combination + 1) * n.n_s].reshape((n.n_s, 1)), n.derivative_indices: derivative_indices[combination * n.n_p: (combination + 1) * n.n_p].reshape((n.n_p, 1)), n.dropout: 1.})
+                    for combination in range(n_train):
+                        n.sess.run(n.backpropagate, feed_dict = {n.x_central: data['x_central'][central_indices[combination * n.n_s: (combination + 1) * n.n_s]], n.x_m: data['x_m'][derivative_indices[combination * n.n_p: (combination + 1) * n.n_p]], n.x_p: data['x_p'][derivative_indices[combination * n.n_p: (combination + 1) * n.n_p]], n.dropout: keep_rate})
+                    train_F = n.sess.run(n.F, feed_dict = {n.x_central: data['x_central'][central_indices[combination * n.n_s: (combination + 1) * n.n_s]], n.x_m: data['x_m'][derivative_indices[combination * n.n_p: (combination + 1) * n.n_p]], n.x_p: data['x_p'][derivative_indices[combination * n.n_p: (combination + 1) * n.n_p]], n.dropout: 1.})
+                n.history["F"].append(train_F)
+                detF = np.linalg.det(train_F)
+                n.history["det(F)"].append(detF)
+                #detF = np.linalg.slogdet(train_F)
+                #n.history["det(F)"].append(detF[0] * detF[1])
+                if history:
+                    if test:
+                        if n.x_central.op.type != 'Placeholder':
+                            μ, C, iC, dμdθ, Λ, test_F, test_μ, test_C, test_iC, test_dμdθ, test_Λ = n.sess.run([n.μ, n.C, n.iC, n.dμdθ, n.Λ, n.test_F, n.test_μ, n.test_C, n.test_iC, n.test_dμdθ, n.test_Λ], feed_dict = {n.central_indices: central_indices[combination * n.n_s: (combination + 1) * n.n_s].reshape((n.n_s, 1)), n.derivative_indices: derivative_indices[combination * n.n_p: (combination + 1) * n.n_p].reshape((n.n_p, 1)), n.dropout: 1.})
+                        else:
+                            μ, C, iC, dμdθ, Λ, test_F, test_μ, test_C, test_iC, test_dμdθ, test_Λ = n.sess.run([n.μ, n.C, n.iC, n.dμdθ, n.Λ, n.test_F, n.test_μ, n.test_C, n.test_iC, n.test_dμdθ, n.test_Λ], feed_dict = {n.x_central: data['x_central_test'], n.x_m: data['x_m_test'], n.x_p: data['x_p_test'], n.dropout: 1.})
+                        n.history["test F"].append(test_F)
+                        dettestF = np.linalg.det(test_F)
+                        n.history["det(test F)"].append(dettestF)
+                        #dettestF = np.linalg.slogdet(test_F)
+                        #n.history["det(test F)"].append(dettestF[0] * dettestF[1])
+                        n.history["test μ"].append(test_μ)
+                        n.history["test C"].append(test_C)
+                        dettestC = np.linalg.det(test_C)
+                        n.history["det(test C)"].append(dettestC)
+                        #dettestC = np.linalg.slogdet(test_C)
+                        #n.history["det(test C)"].append(dettestC[0] * dettestC[1])
+                        n.history["test iC"].append(test_iC)
+                        dettestiC = np.linalg.det(test_iC)
+                        n.history["det(test iC)"].append(dettestiC)
+                        #dettestiC = np.linalg.slogdet(test_iC)
+                        #n.history["det(test iC)"].append(dettestiC[0] * dettestiC[1])
+                        n.history["test dμdθ"].append(test_dμdθ)
+                        n.history["test Λ"].append(test_Λ)
+                        tq.set_postfix(detF = n.history["det(F)"][-1], lndetF_test = n.history["det(test F)"][-1])
                     else:
-                        μ, C, iC, dμdθ, Λ = n.sess.run([n.μ, n.C, n.iC, n.dμdθ, n.Λ], feed_dict = {n.x_central: data['x_central'][central_indices[combination * n.n_s: (combination + 1) * n.n_s]], n.x_m: data['x_m'][derivative_indices[combination * n.n_p: (combination + 1) * n.n_p]], n.x_p: data['x_p'][derivative_indices[combination * n.n_p: (combination + 1) * n.n_p]], n.dropout: 1.})
+                        if n.x_central.op.type != 'Placeholder':
+                            μ, C, iC, dμdθ, Λ = n.sess.run([n.μ, n.C, n.iC, n.dμdθ, n.Λ], feed_dict = {n.central_indices: central_indices[combination * n.n_s: (combination + 1) * n.n_s].reshape((n.n_s, 1)), n.derivative_indices: derivative_indices[combination * n.n_p: (combination + 1) * n.n_p].reshape((n.n_p, 1)), n.dropout: 1.})
+                        else:
+                            μ, C, iC, dμdθ, Λ = n.sess.run([n.μ, n.C, n.iC, n.dμdθ, n.Λ], feed_dict = {n.x_central: data['x_central'][central_indices[combination * n.n_s: (combination + 1) * n.n_s]], n.x_m: data['x_m'][derivative_indices[combination * n.n_p: (combination + 1) * n.n_p]], n.x_p: data['x_p'][derivative_indices[combination * n.n_p: (combination + 1) * n.n_p]], n.dropout: 1.})
+                        tq.set_postfix(detF = n.history["det(F)"][-1])
+                    n.history["μ"].append(μ)
+                    n.history["C"].append(C)
+                    detC = np.linalg.det(C)
+                    n.history["det(C)"].append(detC)
+                    #detC = np.linalg.slogdet(C)
+                    #n.history["det(C)"].append(detC[0] * detC[1])
+                    n.history["iC"].append(iC)
+                    detiC = np.linalg.det(iC)
+                    n.history["det(iC)"].append(detiC)
+                    #detiC = np.linalg.slogdet(iC)
+                    #n.history["det(iC)"].append(detiC[0] * detiC[1])
+                    n.history["dμdθ"].append(dμdθ)
+                    n.history["Λ"].append(Λ)
+                else:
                     tq.set_postfix(detF = n.history["det(F)"][-1])
-                n.history["μ"].append(μ)
-                n.history["C"].append(C)
-                detC = np.linalg.det(C)
-                n.history["det(C)"].append(detC)
-                #detC = np.linalg.slogdet(C)
-                #n.history["det(C)"].append(detC[0] * detC[1])
-                n.history["iC"].append(iC)
-                detiC = np.linalg.det(iC)
-                n.history["det(iC)"].append(detiC)
-                #detiC = np.linalg.slogdet(iC)
-                #n.history["det(iC)"].append(detiC[0] * detiC[1])
-                n.history["dμdθ"].append(dμdθ)
-                n.history["Λ"].append(Λ)
-            else:
-                tq.set_postfix(detF = n.history["det(F)"][-1])
-        if n.save_file is not None:
-            n.save_network()
+            if n.save_file is not None:
+                n.save_network()
 
     def ABC(n, real_data, prior, draws, generate_simulation, at_once = True, data = None):
         # PERFORM APPROXIMATE BAYESIAN COMPUTATION WITH RANDOM DRAWS FROM PRIOR
@@ -914,22 +925,28 @@ class IMNN():
         # difference                    array     - difference between summary of real data and summaries of simulations
         # distances                     array     - Euclidean distance between real summary and summaries of simulations
         #______________________________________________________________
-        if n.x_central.op.type != 'Placeholder':
-            F = n.sess.run(n.test_F)
-        else:
-            F = n.sess.run(n.test_F, feed_dict = {n.x_central: data['x_central_test'], n.x_m: data['x_m_test'], n.x_p: data['x_p_test'], n.dropout: 1.})
-        summary = n.sess.run(n.output, feed_dict = {n.x: real_data, n.dropout: 1.})[0]
-        θ = np.random.uniform(prior[0], prior[1], draws)
-        if at_once:
-            simulations = generate_simulation(θ)
-            simulation_summaries = n.sess.run(n.output, feed_dict = {n.x: simulations, n.dropout: 1.})
-        else:
-            simulation_summaries = np.zeros([draws, n.n_summaries])
-            for theta in tqdm.tqdm(range(draws)):
-                simulation = generate_simulation([θ[theta]])
-                simulation_summaries[theta] = n.sess.run(n.output, feed_dict = {n.x: simulation, n.dropout: 1.})[0]
-        difference = simulation_summaries - summary
-        distances = np.sqrt(np.einsum('ij,ij->i', difference, np.einsum('jk,ik->ij', F, difference)))
+        with n.graph.as_default():
+            if n.x_central.op.type != 'Placeholder':
+                F = n.sess.run(n.test_F)
+            else:
+                F = n.sess.run(n.test_F, feed_dict = {n.x_central: data['x_central_test'], n.x_m: data['x_m_test'], n.x_p: data['x_p_test'], n.dropout: 1.})
+            summary = n.sess.run(n.output, feed_dict = {n.x: real_data, n.dropout: 1.})[0]
+            θ = np.array([prior.draw() for i in range(draws)])
+            #θ = np.swapaxes(np.array([np.random.uniform(prior[0][i], prior[1][i], draws) for i in range(len(prior[0]))]), 0, 1)
+            if at_once:
+                simulations = generate_simulation(θ)
+                simulation_summaries = n.sess.run(n.output, feed_dict = {n.x: simulations, n.dropout: 1.})
+            else:
+                simulation_summaries = np.zeros([draws, n.n_summaries])
+                for theta in tqdm.tqdm(range(draws)):
+                    accept = False
+                    while not accept:
+                        accept, simulation = generate_simulation(θ[theta])
+                        if not accept:
+                            θ[theta] = prior.draw()
+                    simulation_summaries[theta] = n.sess.run(n.output, feed_dict = {n.x: simulation, n.dropout: 1.})[0]
+            difference = simulation_summaries - summary
+            distances = np.sqrt(np.einsum('ij,ij->i', difference, np.einsum('jk,ik->ij', F, difference)))
         return θ, summary, simulation_summaries, distances, F
 
     def PMC(n, real_data, prior, num_draws, num_keep, generate_simulation, criterion, at_once = True, samples = None, data = None):
@@ -996,65 +1013,66 @@ class IMNN():
         #______________________________________________________________
         continue_from_samples = utils.utils().to_continue(samples)
         utils.utils().enough(num_draws, num_keep)
-        if continue_from_samples:
-            θ_ = samples[0]
-            summary = samples[1]
-            ρ_ = samples[2]
-            s_ = samples[3]
-            W = samples[4]
-            total_draws = samples[5]
-            F = samples[6]
-        else:
-            θ, summary, s, ρ, F = n.ABC(real_data, prior, num_draws, generate_simulation, at_once, data = data)
-            keep_index = np.argsort(np.abs(ρ))
-            θ_ = θ[keep_index[: num_keep]]
-            ρ_ = ρ[keep_index[: num_keep]]
-            s_ = s[keep_index[: num_keep]]
-            W = np.ones(num_keep) / num_keep
-            total_draws = num_draws
-        pθ = 1./(prior[1] - prior[0])
-        iteration = 0
-        criterion_reached = 1e10
-        while criterion < criterion_reached:
-            cov = np.cov(θ_, aweights = W)
-            ϵ = np.percentile(ρ_, 75)
-            redraw_index = np.where(ρ_ >= ϵ)[0]
-            W_temp = np.copy(W)
-            current_draws = len(redraw_index)
-            draws = 0
-            while current_draws > 0:
-                draws += current_draws
-                θ_temp = np.random.normal(θ_[redraw_index], np.sqrt(cov))
-                below_prior = np.where(θ_temp <= prior[0])[0]
-                above_prior = np.where(θ_temp > prior[1])[0]
-                while len(below_prior) > 0 or len(above_prior) > 0:
-                    θ_temp[below_prior] = np.random.normal(θ_[redraw_index[below_prior]], np.sqrt(cov))
-                    θ_temp[above_prior] = np.random.normal(θ_[redraw_index[above_prior]], np.sqrt(cov))
+        with n.graph.as_default():
+            if continue_from_samples:
+                θ_ = samples[0]
+                summary = samples[1]
+                ρ_ = samples[2]
+                s_ = samples[3]
+                W = samples[4]
+                total_draws = samples[5]
+                F = samples[6]
+            else:
+                θ, summary, s, ρ, F = n.ABC(real_data, prior, num_draws, generate_simulation, at_once, data = data)
+                keep_index = np.argsort(np.abs(ρ))
+                θ_ = θ[keep_index[: num_keep]]
+                ρ_ = ρ[keep_index[: num_keep]]
+                s_ = s[keep_index[: num_keep]]
+                W = np.ones(num_keep) / num_keep
+                total_draws = num_draws
+            pθ = 1./(prior[1] - prior[0])
+            iteration = 0
+            criterion_reached = 1e10
+            while criterion < criterion_reached:
+                cov = np.cov(θ_, aweights = W)
+                ϵ = np.percentile(ρ_, 75)
+                redraw_index = np.where(ρ_ >= ϵ)[0]
+                W_temp = np.copy(W)
+                current_draws = len(redraw_index)
+                draws = 0
+                while current_draws > 0:
+                    draws += current_draws
+                    θ_temp = np.random.normal(θ_[redraw_index], np.sqrt(cov))
                     below_prior = np.where(θ_temp <= prior[0])[0]
                     above_prior = np.where(θ_temp > prior[1])[0]
-                if at_once:
-                    simulations = generate_simulation(θ_temp)
-                    simulation_summaries = n.sess.run(n.output, feed_dict = {n.x: simulations, n.dropout: 1.})
-                else:
-                    simulation_summaries = np.zeros([current_draws, n.n_summaries])
-                    for theta in range(current_draws):
-                        simulation = generate_simulation([θ_temp[theta]])
-                        simulation_summaries[theta] = n.sess.run(n.output, feed_dict = {n.x: simulation, n.dropout: 1.})[0]
-                difference = simulation_summaries - summary
-                ρ_temp = np.sqrt(np.einsum('ij,ij->i', difference, np.einsum('jk,ik->ij', F, difference)))
-                accept_index = np.where(ρ_temp <= ϵ)[0]
-                if len(accept_index) > 0:
-                    ρ_[redraw_index[accept_index]] = ρ_temp[accept_index]
-                    θ_[redraw_index[accept_index]] = θ_temp[accept_index]
-                    s_[redraw_index[accept_index]] = simulation_summaries[accept_index]
-                    W_temp[redraw_index[accept_index]] = pθ / np.sum(W[:, None] * np.exp(-0.5 * (np.stack([θ_temp[accept_index] for i in range(num_keep)]) - θ_[:, None])**2. / cov) / np.sqrt(2 * np.pi * cov), axis = 0)
-                redraw_index = np.where(ρ_ >= ϵ)[0]
-                current_draws = len(redraw_index)
-            W = np.copy(W_temp)
-            criterion_reached = num_keep / draws
-            iteration += 1
-            total_draws += draws
-            print('iteration = ' + str(iteration) + ', current criterion = ' + str(criterion_reached) + ', total draws = ' + str(total_draws) + ', ϵ = ' + str(ϵ) + '.', end = '\r')
+                    while len(below_prior) > 0 or len(above_prior) > 0:
+                        θ_temp[below_prior] = np.random.normal(θ_[redraw_index[below_prior]], np.sqrt(cov))
+                        θ_temp[above_prior] = np.random.normal(θ_[redraw_index[above_prior]], np.sqrt(cov))
+                        below_prior = np.where(θ_temp <= prior[0])[0]
+                        above_prior = np.where(θ_temp > prior[1])[0]
+                    if at_once:
+                        simulations = generate_simulation(θ_temp)
+                        simulation_summaries = n.sess.run(n.output, feed_dict = {n.x: simulations, n.dropout: 1.})
+                    else:
+                        simulation_summaries = np.zeros([current_draws, n.n_summaries])
+                        for theta in range(current_draws):
+                            simulation = generate_simulation([θ_temp[theta]])
+                            simulation_summaries[theta] = n.sess.run(n.output, feed_dict = {n.x: simulation, n.dropout: 1.})[0]
+                    difference = simulation_summaries - summary
+                    ρ_temp = np.sqrt(np.einsum('ij,ij->i', difference, np.einsum('jk,ik->ij', F, difference)))
+                    accept_index = np.where(ρ_temp <= ϵ)[0]
+                    if len(accept_index) > 0:
+                        ρ_[redraw_index[accept_index]] = ρ_temp[accept_index]
+                        θ_[redraw_index[accept_index]] = θ_temp[accept_index]
+                        s_[redraw_index[accept_index]] = simulation_summaries[accept_index]
+                        W_temp[redraw_index[accept_index]] = pθ / np.sum(W[:, None] * np.exp(-0.5 * (np.stack([θ_temp[accept_index] for i in range(num_keep)]) - θ_[:, None])**2. / cov) / np.sqrt(2 * np.pi * cov), axis = 0)
+                    redraw_index = np.where(ρ_ >= ϵ)[0]
+                    current_draws = len(redraw_index)
+                W = np.copy(W_temp)
+                criterion_reached = num_keep / draws
+                iteration += 1
+                total_draws += draws
+                print('iteration = ' + str(iteration) + ', current criterion = ' + str(criterion_reached) + ', total draws = ' + str(total_draws) + ', ϵ = ' + str(ϵ) + '.', end = '\r')
         return θ_, summary, ρ_, s_, W, total_draws, F
 
     def θ_MLE(n, real_data, data = None):
@@ -1075,10 +1093,11 @@ class IMNN():
         # dropout                     n tensor    - keep rate for dropout layer
         # MLE                         n tensor    - MLE of parameters
         #______________________________________________________________
-        if n.x_central.op.type != 'Placeholder':
-            return n.sess.run(n.MLE, feed_dict = {n.x: real_data, n.dropout: 1.})
-        else:
-            return n.sess.run(n.MLE, feed_dict = {n.x: real_data, n.x_central: data['x_central_test'], n.x_m: data['x_m_test'], n.x_p: data['x_p_test'], n.dropout: 1.})
+        with n.graph.as_default():
+            if n.x_central.op.type != 'Placeholder':
+                return n.sess.run(n.MLE, feed_dict = {n.x: real_data, n.dropout: 1.})
+            else:
+                return n.sess.run(n.MLE, feed_dict = {n.x: real_data, n.x_central: data['x_central_test'], n.x_m: data['x_m_test'], n.x_p: data['x_p_test'], n.dropout: 1.})
 
     def asymptotic_likelihood(n, real_data, prior, data = None):
         # CALCULATE ASYMPTOTIC LIKELIHOOD OVER PARAMETER RANGE
@@ -1100,7 +1119,8 @@ class IMNN():
         # dropout                     n tensor    - keep rate for dropout layer
         # AL                          n tensor    - asymptotic likelihood at range of parameter values
         #______________________________________________________________
-        if n.x_central.op.type != 'Placeholder':
-            return n.sess.run(n.AL, feed_dict = {n.x: real_data, n.prior: prior, n.dropout: 1.})
-        else:
-            return n.sess.run(n.AL, feed_dict = {n.x: real_data, n.x_central: data['x_central_test'], n.x_m: data['x_m_test'], n.x_p: data['x_p_test'], n.prior: prior, n.dropout: 1.})
+        with n.graph.as_default():
+            if n.x_central.op.type != 'Placeholder':
+                return n.sess.run(n.AL, feed_dict = {n.x: real_data, n.prior: prior, n.dropout: 1.})
+            else:
+                return n.sess.run(n.AL, feed_dict = {n.x: real_data, n.x_central: data['x_central_test'], n.x_m: data['x_m_test'], n.x_p: data['x_p_test'], n.prior: prior, n.dropout: 1.})

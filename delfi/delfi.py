@@ -29,11 +29,13 @@ class Delfi():
 
         # Initialize the NDE and trainer
         self.nde = nde
-        self.trainer = ndes.train.ConditionalTrainer(nde)
+        self.graph = self.nde.graph
+        with self.graph.as_default():
+            self.trainer = ndes.train.ConditionalTrainer(nde)
 
-        # Tensorflow session for the NDE training
-        self.sess = tf.Session(config = tf.ConfigProto())
-        self.sess.run(tf.global_variables_initializer())
+            # Tensorflow session for the NDE training
+            self.sess = tf.Session(config = tf.ConfigProto())
+            self.sess.run(tf.global_variables_initializer())
 
         # Fisher matrix and fiducial parameters
         self.Finv = Finv
@@ -153,6 +155,7 @@ class Delfi():
         i_prop = self.inds_prop[0]
         i_acpt = self.inds_acpt[0]
         err_msg = 'Simulator returns {:s} for parameter values: {} (rank {:d})'
+        pbar = tqdm.tqdm(total = self.inds_acpt[-1], desc = "Simulations")
         while i_acpt <= self.inds_acpt[-1]:
             try:
                 sim = compressor(simulator(ps[i_prop,:], seed_generator(), simulator_args), compressor_args)
@@ -160,6 +163,7 @@ class Delfi():
                     data_samples[i_acpt,:] = sim
                     parameter_samples[i_acpt,:] = ps[i_prop,:]
                     i_acpt += 1
+                    pbar.update(1)
                 else:
                     print(err_msg.format('NaN/inf', ps[i_prop,:], self.rank))
             except:
@@ -189,7 +193,8 @@ class Delfi():
     # MDN log likelihood
     def log_likelihood(self, theta):
 
-        lnL = self.nde.eval((np.atleast_2d((theta-self.theta_fiducial)/self.fisher_errors), np.atleast_2d((self.data-self.theta_fiducial)/self.fisher_errors)), self.sess)
+        #lnL = self.nde.eval((np.atleast_2d((theta-self.theta_fiducial)/self.fisher_errors), np.atleast_2d((self.data-self.theta_fiducial)/self.fisher_errors)), self.sess)
+        lnL = self.nde.eval((np.atleast_2d(theta), np.atleast_2d(self.data)), self.sess)
 
         if np.isnan(lnL) == True:
             return -1e300
@@ -231,8 +236,8 @@ class Delfi():
 
             # Construct the initial training-set
 
-            ps_batch = (ps_batch - self.theta_fiducial)/self.fisher_errors
-            xs_batch = (xs_batch - self.theta_fiducial)/self.fisher_errors
+            #ps_batch = (ps_batch - self.theta_fiducial)/self.fisher_errors
+            #xs_batch = (xs_batch - self.theta_fiducial)/self.fisher_errors
             self.ps = np.concatenate([self.ps, ps_batch])
             self.xs = np.concatenate([self.xs, xs_batch])
             self.x_train = self.ps.astype(np.float32)
@@ -240,8 +245,9 @@ class Delfi():
             self.n_sims = len(self.x_train)
 
             # Train the network on these initial simulations
-            val_loss, train_loss = self.trainer.train(self.sess, [self.x_train, self.y_train], validation_split = validation_split, epochs = epochs, batch_size=self.n_sims//10,
-                  patience=patience, saver_name='{}tmp_model'.format(self.results_dir))
+            with self.graph.as_default():
+                val_loss, train_loss = self.trainer.train(self.sess, [self.x_train, self.y_train], validation_split = validation_split, epochs = epochs, batch_size=self.n_sims//10,
+                    patience=patience, saver_name='{}tmp_model'.format(self.results_dir))
 
             # Save the training and validation losses
             self.training_loss = np.concatenate([self.training_loss, train_loss])
@@ -308,8 +314,8 @@ class Delfi():
             if self.rank == 0:
 
                 # Augment the training data
-                ps_batch = (ps_batch - self.theta_fiducial)/self.fisher_errors
-                xs_batch = (xs_batch - self.theta_fiducial)/self.fisher_errors
+                #ps_batch = (ps_batch - self.theta_fiducial)/self.fisher_errors
+                #xs_batch = (xs_batch - self.theta_fiducial)/self.fisher_errors
                 self.ps = np.concatenate([self.ps, ps_batch])
                 self.xs = np.concatenate([self.xs, xs_batch])
                 self.n_sims += n_batch
@@ -317,7 +323,8 @@ class Delfi():
                 self.y_train = self.xs.astype(np.float32)
 
                 # Train the network on these initial simulations
-                val_loss, train_loss = self.trainer.train(self.sess, [self.x_train, self.y_train], validation_split=validation_split, epochs=epochs, batch_size=self.n_sims//10,
+                with self.graph.as_default():
+                    val_loss, train_loss = self.trainer.train(self.sess, [self.x_train, self.y_train], validation_split=validation_split, epochs=epochs, batch_size=self.n_sims//10,
                            patience=patience, saver_name='{}tmp_model'.format(self.results_dir))
 
                 # Save the training and validation losses
@@ -355,7 +362,8 @@ class Delfi():
 
         # Train the network on these initial simulations
         print('Training the neural density estimator...')
-        val_loss, train_loss = self.trainer.train(self.sess, [self.x_train, self.y_train], validation_split = validation_split, epochs=epochs, batch_size=batch_size,
+        with self.graph.as_default():
+            val_loss, train_loss = self.trainer.train(self.sess, [self.x_train, self.y_train], validation_split = validation_split, epochs=epochs, batch_size=batch_size,
                            patience=patience, saver_name='{}tmp_model'.format(self.results_dir))
 
         # Save the training and validation losses
@@ -385,8 +393,8 @@ class Delfi():
 
     def load_simulations(self, xs_batch, ps_batch):
 
-        ps_batch = (ps_batch - self.theta_fiducial)/self.fisher_errors
-        xs_batch = (xs_batch - self.theta_fiducial)/self.fisher_errors
+        #ps_batch = (ps_batch - self.theta_fiducial)/self.fisher_errors
+        #xs_batch = (xs_batch - self.theta_fiducial)/self.fisher_errors
         self.ps = np.concatenate([self.ps, ps_batch])
         self.xs = np.concatenate([self.xs, xs_batch])
         self.x_train = self.ps.astype(np.float32)
@@ -403,16 +411,18 @@ class Delfi():
             print('Generating fisher pre-training data...')
 
             # Anticipated covariance of the re-scaled data
-            Cdd = np.zeros((self.npar, self.npar))
-            for i in range(self.npar):
-                for j in range(self.npar):
-                    Cdd[i,j] = self.Finv[i,j]/(self.fisher_errors[i]*self.fisher_errors[j])
+            #Cdd = np.zeros((self.npar, self.npar))
+            #for i in range(self.npar):
+            #    for j in range(self.npar):
+            #        Cdd[i,j] = self.Finv[i,j]/(self.fisher_errors[i]*self.fisher_errors[j])
+            Cdd = np.copy(self.Finv)
             Ldd = np.linalg.cholesky(Cdd)
 
             # Sample parameters from some broad proposal
             ps = np.zeros((n_batch, self.npar))
             for i in tqdm.trange(n_batch, desc = "Sample parameters"):
-                ps[i,:] = (proposal.draw() - self.theta_fiducial)/self.fisher_errors
+                #ps[i,:] = (proposal.draw() - self.theta_fiducial)/self.fisher_errors
+                ps[i, :] = proposal.draw()
 
             # Sample data assuming a Gaussian likelihood
             xs = np.array([pss + np.dot(Ldd, np.random.normal(0, 1, self.npar)) for pss in ps])
@@ -424,7 +434,8 @@ class Delfi():
             # Train network on initial (asymptotic) simulations
             print('Training the neural density estimator...')
             # Train the network on these initial simulations
-            validation_loss, train_loss = self.trainer.train(self.sess, [fisher_x_train, fisher_y_train], validation_split = validation_split, epochs=epochs, batch_size=batch_size, patience=patience, saver_name='{}tmp_model'.format(self.results_dir))
+            with self.graph.as_default():
+                validation_loss, train_loss = self.trainer.train(self.sess, [fisher_x_train, fisher_y_train], validation_split = validation_split, epochs=epochs, batch_size=batch_size, patience=patience, saver_name='{}tmp_model'.format(self.results_dir))
             print('Done.')
 
             # Initialization for the EMCEE sampling

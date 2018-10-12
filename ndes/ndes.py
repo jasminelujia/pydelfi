@@ -50,48 +50,51 @@ class ConditionalMaskedAutoregressiveFlow:
         self.momentum = momentum
         self.mode = mode
 
-        with tf.variable_scope("MAF") as scope:
-            self.input = tf.placeholder(dtype=dtype,shape=[None,n_inputs],name='x') if input is None else input
-            self.y = tf.placeholder(dtype=dtype,shape=[None,n_outputs],name='y') if output is None else output
-            self.training = tf.placeholder_with_default(False,shape=(),name="training")
-            self.parms = []
+        self.graph = tf.Graph()
 
-            self.mades = []
-            self.bns = []
-            self.u = self.y
-            self.logdet_dudy = 0.0
+        with self.graph.as_default():
+            with tf.variable_scope("MAF") as scope:
+                self.input = tf.placeholder(dtype=dtype,shape=[None,n_inputs],name='x') if input is None else input
+                self.y = tf.placeholder(dtype=dtype,shape=[None,n_outputs],name='y') if output is None else output
+                self.training = tf.placeholder_with_default(False,shape=(),name="training")
+                self.parms = []
 
-            for i in range(n_mades):
+                self.mades = []
+                self.bns = []
+                self.u = self.y
+                self.logdet_dudy = 0.0
 
-                # create a new made
-                made = ndes.mades.ConditionalGaussianMade(n_inputs, n_outputs, n_hiddens, act_fun,
-                                                     output_order, mode, self.input, self.u)
-                self.mades.append(made)
-                self.parms += made.parms
-                output_order = output_order if output_order is 'random' else made.output_order[::-1]
+                for i in range(n_mades):
 
-                # inverse autoregressive transform
-                self.u = made.u
-                self.logdet_dudy += 0.5 * tf.reduce_sum(made.logp, axis=1,keepdims=True)
+                    # create a new made
+                    made = ndes.mades.ConditionalGaussianMade(n_inputs, n_outputs, n_hiddens, act_fun,
+                                                         output_order, mode, self.input, self.u)
+                    self.mades.append(made)
+                    self.parms += made.parms
+                    output_order = output_order if output_order is 'random' else made.output_order[::-1]
 
-                # batch normalization
-                if batch_norm:
-                    bn = BatchNormalizationExt(momentum=self.momentum)
-                    v_tmp = tf.nn.moments(self.u,[0])[1]
-                    self.u = bn.apply(self.u,training=self.training)
-                    self.parms += [bn.gamma,bn.beta]
-                    v_tmp = tf.cond(self.training,lambda:v_tmp,lambda:bn.moving_variance)
-                    self.logdet_dudy += tf.reduce_sum(tf.log(bn.gamma)) - 0.5 * tf.reduce_sum(tf.log(v_tmp+1e-5))
-                    self.bns.append(bn)
+                    # inverse autoregressive transform
+                    self.u = made.u
+                    self.logdet_dudy += 0.5 * tf.reduce_sum(made.logp, axis=1,keepdims=True)
 
-            self.output_order = self.mades[0].output_order
+                    # batch normalization
+                    if batch_norm:
+                        bn = BatchNormalizationExt(momentum=self.momentum)
+                        v_tmp = tf.nn.moments(self.u,[0])[1]
+                        self.u = bn.apply(self.u,training=self.training)
+                        self.parms += [bn.gamma,bn.beta]
+                        v_tmp = tf.cond(self.training,lambda:v_tmp,lambda:bn.moving_variance)
+                        self.logdet_dudy += tf.reduce_sum(tf.log(bn.gamma)) - 0.5 * tf.reduce_sum(tf.log(v_tmp+1e-5))
+                        self.bns.append(bn)
 
-            # log likelihoods
-            self.L = tf.add(-0.5 * n_outputs * np.log(2 * np.pi) - 0.5 * tf.reduce_sum(self.u ** 2, axis=1,keepdims=True),
-                            self.logdet_dudy,name='L')
+                self.output_order = self.mades[0].output_order
 
-            # train objective
-            self.trn_loss = -tf.reduce_mean(self.L,name='trn_loss')
+                # log likelihoods
+                self.L = tf.add(-0.5 * n_outputs * np.log(2 * np.pi) - 0.5 * tf.reduce_sum(self.u ** 2, axis=1,keepdims=True),
+                                self.logdet_dudy,name='L')
+
+                # train objective
+                self.trn_loss = -tf.reduce_mean(self.L,name='trn_loss')
 
     def eval(self, xy, sess, log=True):
         """
@@ -168,45 +171,46 @@ class MixtureDensityNetwork:
         self.n_hidden = n_hidden
         self.activations = activations
         self.batch_norm = batch_norm
+        self.graph = tf.Graph()
 
-        with tf.variable_scope("MDN") as scope:
-            self.input = tf.placeholder(dtype=dtype,shape=[None,self.P],name='x') if input is None else input
-            self.y = tf.placeholder(dtype=dtype,shape=[None,self.D],name='y') if output is None else output
-            self.training = tf.placeholder_with_default(False,shape=(),name="training")
+        with self.graph.as_default():
+            with tf.variable_scope("MDN") as scope:
+                self.input = tf.placeholder(dtype=dtype,shape=[None,self.P],name='x') if input is None else input
+                self.y = tf.placeholder(dtype=dtype,shape=[None,self.D],name='y') if output is None else output
+                self.training = tf.placeholder_with_default(False,shape=(),name="training")
 
-            # Build the layers of the network
-            self.layers = [self.input]
-            self.weights = []
-            self.biases = []
-            for i in range(len(self.n_hidden)):
-                with tf.variable_scope('layer_' + str(i + 1)):
-                    if i == 0:
-                        self.weights.append(tf.get_variable("weights", [self.P, self.n_hidden[i]], initializer = tf.random_normal_initializer(0., np.sqrt(2./self.P))))
-                        self.biases.append(tf.get_variable("biases", [self.n_hidden[i]], initializer = tf.constant_initializer(0.0)))
-                    elif i == len(self.n_hidden) - 1:
-                        self.weights.append(tf.get_variable("weights", [self.n_hidden[i], self.N], initializer = tf.random_normal_initializer(0., np.sqrt(2./self.n_hidden[i]))))
-                        self.biases.append(tf.get_variable("biases", [self.N], initializer = tf.constant_initializer(0.0)))
+                # Build the layers of the network
+                self.layers = [self.input]
+                self.weights = []
+                self.biases = []
+                for i in range(len(self.n_hidden)):
+                    with tf.variable_scope('layer_' + str(i + 1)):
+                        if i == 0:
+                            self.weights.append(tf.get_variable("weights", [self.P, self.n_hidden[i]], initializer = tf.random_normal_initializer(0., np.sqrt(2./self.P))))
+                            self.biases.append(tf.get_variable("biases", [self.n_hidden[i]], initializer = tf.constant_initializer(0.0)))
+                        elif i == len(self.n_hidden) - 1:
+                            self.weights.append(tf.get_variable("weights", [self.n_hidden[i], self.N], initializer = tf.random_normal_initializer(0., np.sqrt(2./self.n_hidden[i]))))
+                            self.biases.append(tf.get_variable("biases", [self.N], initializer = tf.constant_initializer(0.0)))
+                        else:
+                            self.weights.append(tf.get_variable("weights", [self.n_hidden[i], self.n_hidden[i + 1]], initializer = tf.random_normal_initializer(0., np.sqrt(2/self.n_hidden[i]))))
+                            self.biases.append(tf.get_variable("biases", [self.n_hidden[i + 1]], initializer = tf.constant_initializer(0.0)))
+                    if i < len(self.n_hidden) - 1:
+                        self.layers.append(self.activations[i](tf.add(tf.matmul(self.layers[-1], self.weights[-1]), self.biases[-1])))
                     else:
-                        self.weights.append(tf.get_variable("weights", [self.n_hidden[i], self.n_hidden[i + 1]], initializer = tf.random_normal_initializer(0., np.sqrt(2/self.n_hidden[i]))))
-                        self.biases.append(tf.get_variable("biases", [self.n_hidden[i + 1]], initializer = tf.constant_initializer(0.0)))
-                if i < len(self.n_hidden) - 1:
-                    self.layers.append(self.activations[i](tf.add(tf.matmul(self.layers[-1], self.weights[-1]), self.biases[-1])))
-                else:
-                    self.layers.append(tf.add(tf.matmul(self.layers[-1], self.weights[-1]), self.biases[-1]))
+                        self.layers.append(tf.add(tf.matmul(self.layers[-1], self.weights[-1]), self.biases[-1]))
 
-            # Map the output layer to mixture model parameters
-            self.μ, self.Σ, self.α, self.det = self.mapping(self.layers[-1])
-            self.μ = tf.identity(self.μ, name = "mu")
-            self.Σ = tf.identity(self.Σ, name = "Sigma")
-            self.α = tf.identity(self.α, name = "alpha")
-            self.det = tf.identity(self.det, name = "det")
-            
-            # Log likelihoods
-            self.L = tf.log(tf.reduce_sum(tf.exp(-0.5*tf.reduce_sum(tf.square(tf.einsum("ijlk,ijk->ijl", self.Σ, tf.subtract(tf.expand_dims(self.y, 1), self.μ))), 2) + tf.log(self.α) + tf.log(self.det) - self.D*np.log(2. * np.pi) / 2.), 1) + 1e-37, name = "L")
+                # Map the output layer to mixture model parameters
+                self.μ, self.Σ, self.α, self.det = self.mapping(self.layers[-1])
+                self.μ = tf.identity(self.μ, name = "mu")
+                self.Σ = tf.identity(self.Σ, name = "Sigma")
+                self.α = tf.identity(self.α, name = "alpha")
+                self.det = tf.identity(self.det, name = "det")
 
-            # Objective loss function
-            self.trn_loss = -tf.reduce_mean(self.L, name = "trn_loss")
+                # Log likelihoods
+                self.L = tf.log(tf.reduce_sum(tf.exp(-0.5*tf.reduce_sum(tf.square(tf.einsum("ijlk,ijk->ijl", self.Σ, tf.subtract(tf.expand_dims(self.y, 1), self.μ))), 2) + tf.log(self.α) + tf.log(self.det) - self.D*np.log(2. * np.pi) / 2.), 1) + 1e-37, name = "L")
 
+                # Objective loss function
+                self.trn_loss = -tf.reduce_mean(self.L, name = "trn_loss")
 
     # Build lower triangular from network output (also calculate determinant)
     def lower_triangular_matrix(self, σ):

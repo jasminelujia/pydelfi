@@ -14,8 +14,8 @@ def make_simulations_without_derivatives(sim_number, data_arrays):
     theta = data_arrays[0]
     simulator = data_arrays[1]
     simulator_args = data_arrays[2]
-    data = simulator(theta, np.random.randint(1e6), simulator_args).flatten()
-    data_test = simulator(theta, np.random.randint(1e6), simulator_args).flatten()
+    data = simulator(theta, np.random.randint(1e6), simulator_args)
+    data_test = simulator(theta, np.random.randint(1e6), simulator_args)
     return data, data_test
 
 def make_simulations_with_derivatives(sim_number, data_arrays):
@@ -34,15 +34,15 @@ def make_simulations_with_derivatives(sim_number, data_arrays):
     for param in range(len(theta)):
         theta_m = np.copy(theta)
         theta_m[param] -= der[param]
-        data_m[param] = simulator(theta_m, seed_1, simulator_args).flatten()
-        data_m_test[param] = simulator(theta_m, seed_2, simulator_args).flatten()
+        data_m[param] = simulator(theta_m, seed_1, simulator_args)
+        data_m_test[param] = simulator(theta_m, seed_2, simulator_args)
         theta_p = np.copy(theta)
         theta_p[param] += der[param]
-        data_p[param] = simulator(theta_p, seed_1, simulator_args).flatten()
-        data_p_test[param] = simulator(theta_p, seed_2, simulator_args).flatten()
+        data_p[param] = simulator(theta_p, seed_1, simulator_args)
+        data_p_test[param] = simulator(theta_p, seed_2, simulator_args)
     return data_m, data_m_test, data_p, data_p_test
 
-def get_network(simulator, simulator_args, simulation_shape, theta, der, initial_sims, filename, make_simulations = True):
+def get_network(simulator, simulator_args, simulation_shape, theta, der, initial_sims, filename, make_simulations = True, load_network = False):
 
     tf.reset_default_graph()
 
@@ -92,7 +92,7 @@ def get_network(simulator, simulator_args, simulation_shape, theta, der, initial
     der_den = 1. / (2 * der)
 
     hidden_layers = []
-    nodes = data['x_central'].shape[-1]
+    nodes = int(np.prod(simulation_shape))
     while nodes > len(theta):
         hidden_layers.append(nodes)
         nodes = nodes // 2
@@ -118,15 +118,22 @@ def get_network(simulator, simulator_args, simulation_shape, theta, der, initial
         }
 
     n = IMNN.IMNN(parameters = parameters)
-    η = 1e-1
-    n.setup(η = η)
+    if load_network:
+        n.restore_network()
+    else:
+        η = 1e-5
+        n.setup(η = η)
     return n
 
 def train_IMNN(n, num_epochs, to_continue = False):
     n.train(num_epochs = num_epochs, n_train = 1, keep_rate = 1., to_continue = to_continue)
 
 def IMNN_compressor(data, n):
-    data = data.reshape((1, data.shape[0]))
+    data = data.reshape([1] + list(data.shape))
+    return n.sess.run(n.output, feed_dict = {n.x: data, n.dropout: 1.})[0]
+
+def IMNN_MLE(data, n):
+    data = data.reshape([1] + list(data.shape))
     return n.sess.run(n.MLE, feed_dict = {n.x: data, n.dropout: 1.})[0]
 
 def plot_train_history(compression_network):
