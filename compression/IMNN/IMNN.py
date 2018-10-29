@@ -90,7 +90,9 @@ class IMNN():
         n.n_s = u.positive_integer([parameters, 'number of simulations'])
         n.n_p = u.number_of_derivative_simulations(parameters, n)
         n.fiducial_θ, n.n_params = u.check_fiducial(parameters)
-        n.derivative_denominator = u.check_derivative(parameters, n)
+        n.true_derivative = u.isboolean([parameters, "true derivative"])
+        if not n.true_derivative:
+            n.derivative_denominator = u.check_derivative(parameters, n)
         n.preload_data = u.check_preloaded(parameters, n)
         n.n_summaries = u.positive_integer([parameters, 'number of summaries'])
         n.prebuild = u.isboolean([parameters, 'prebuild'])
@@ -204,11 +206,12 @@ class IMNN():
                 loader.restore(n.sess, n.save_file)
                 n.x = tf.get_default_graph().get_tensor_by_name("x:0")
                 n.x_central = tf.get_default_graph().get_tensor_by_name("x_central:0")
-                n.x_m = tf.get_default_graph().get_tensor_by_name("x_m:0")
-                n.x_p = tf.get_default_graph().get_tensor_by_name("x_p:0")
-                n.θ_fid = tf.get_default_graph().get_tensor_by_name("fiducial:0")
-                n.prior = tf.get_default_graph().get_tensor_by_name("prior:0")
-                n.dd = tf.get_default_graph().get_tensor_by_name("dd:0")
+                if not n.true_derivative:
+                    n.x_m = tf.get_default_graph().get_tensor_by_name("x_m:0")
+                    n.x_p = tf.get_default_graph().get_tensor_by_name("x_p:0")
+                    n.dd = tf.get_default_graph().get_tensor_by_name("dd:0")
+                else:
+                    n.x_d = tf.get_default_graph().get_tensor_by_name("x_d:0")
                 n.dropout = tf.get_default_graph().get_tensor_by_name("dropout:0")
                 n.output = tf.get_default_graph().get_tensor_by_name("output:0")
                 n.F = tf.get_default_graph().get_tensor_by_name("fisher_information:0")
@@ -224,8 +227,10 @@ class IMNN():
                 n.test_dμdθ = tf.get_default_graph().get_tensor_by_name("test_mean_derivative:0")
                 n.test_Λ = tf.get_default_graph().get_tensor_by_name("test_loss:0")
                 if n.get_MLE:
+                    n.θ_fid = tf.get_default_graph().get_tensor_by_name("fiducial:0")
+                    n.prior = tf.get_default_graph().get_tensor_by_name("prior:0")
                     n.MLE = tf.get_default_graph().get_tensor_by_name("maximum_likelihood_estimate:0")
-                    n.AL = tf.get_default_graph().get_tensor_by_name("asymptotic_likelihood:0")
+                    #n.AL = tf.get_default_graph().get_tensor_by_name("asymptotic_likelihood:0")
                 if "central_indices" in [v.name for v in n.sess.graph.get_operations()]:
                     n.central_indices = tf.get_default_graph().get_tensor_by_name("central_indices:0")
                     n.derivative_indices = tf.get_default_graph().get_tensor_by_name("derivative_indices:0")
@@ -233,7 +238,7 @@ class IMNN():
                 n.backpropagate = tf.get_default_graph().get_operation_by_name("Adam")
                 n.saver = tf.train.Saver()
 
-    def dense(n, input_tensor, l, dropout, last_layer = False):
+    def dense(n, input_tensor, l, dropout, last_layer = False, generic_output = True):
         # DENSE LAYER
         #______________________________________________________________
         # CALLED FROM (DEFINED IN IMNN.py)
@@ -263,21 +268,29 @@ class IMNN():
         # biases                        tensor    - bias kernel
         # dense                         tensor    - dense layer (not activated)
         #______________________________________________________________
-        previous_layer = int(input_tensor.get_shape().as_list()[-1])
+        previous_layer = int(input_tensor[0].get_shape().as_list()[-1])#int(input_tensor.get_shape().as_list()[-1])
         weight_shape = (previous_layer, n.layers[l])
         bias_shape = (n.layers[l])
         if n.allow_init:
             n.wv = np.sqrt(2. / previous_layer)
         weights = tf.get_variable("weights", weight_shape, initializer = tf.random_normal_initializer(0., n.wv))
         biases = tf.get_variable("biases", bias_shape, initializer = tf.constant_initializer(n.bb))
-        dense = tf.add(tf.matmul(input_tensor, weights), biases)
+        #if last_layer and not generic_output:
+        #    return [tf.squeeze(tf.nn.tanh(tf.add(tf.matmul(tf.expand_dims(input_tensor[i], 0), weights), biases)), name = 'dense_' + str(l) + '_' + str(i)) for i in range(n.n_s)]
+        #elif last_layer:
         if last_layer:
-            return tf.nn.tanh(dense, name = 'dense_' + str(l))
+            #return tf.identity(tf.nn.tanh(tf.add(tf.matmul(input_tensor, weights), biases)), name = 'dense_' + str(l))
+            if n.takes_α:
+                return tf.identity(n.activation(tf.add(tf.matmul(input_tensor, weights), biases), n.α), name = 'dense_' + str(l))
+            else:
+                return tf.identity(n.activation(tf.add(tf.matmul(input_tensor, weights), biases)), name = 'dense_' + str(l))
         else:
             if n.takes_α:
-                return tf.nn.dropout(n.activation(dense, n.α), dropout, name = 'dense_' + str(l))
+                    return tf.nn.dropout(n.activation(tf.add(tf.matmul(input_tensor, weights), biases), n.α), dropout, name = 'dense_' + str(l))
             else:
-                return tf.nn.dropout(n.activation(dense), dropout, name = 'dense_' + str(l))
+                    return tf.nn.dropout(n.activation(tf.add(tf.matmul(input_tensor, weights), biases)), dropout, name = 'dense_' + str(l))
+        return dense
+
 
     def conv(n, input_tensor, l, dropout):
         # CONVOLUTIONAL LAYER
@@ -309,7 +322,7 @@ class IMNN():
         # biases                        tensor    - bias kernel
         # conv                          tensor    - convolutional feature map (not activated)
         #______________________________________________________________
-        previous_filters = int(input_tensor.get_shape().as_list()[-1])
+        previous_filters = int(input_tensor[0].get_shape().as_list()[-1])
         if len(n.layers[l][1]) == 2:
             convolution = tf.nn.conv2d
             weight_shape = (n.layers[l][1][0], n.layers[l][1][1], previous_filters, n.layers[l][0])
@@ -321,13 +334,12 @@ class IMNN():
             n.wv = np.sqrt(2. / previous_filters)
         weights = tf.get_variable("weights", weight_shape, initializer = tf.random_normal_initializer(0., n.wv))
         biases = tf.get_variable("biases", bias_shape, initializer = tf.constant_initializer(n.bb))
-        conv = tf.add(convolution(input_tensor, weights, [1] + n.layers[l][2] + [1], padding = n.layers[l][3]), biases)
         if n.takes_α:
-            return tf.nn.dropout(n.activation(conv, n.α), dropout, name = 'conv_' + str(l))
+                return tf.nn.dropout(n.activation(tf.add(convolution(input_tensor, weights, [1] + n.layers[l][2] + [1], padding = n.layers[l][3]), biases), n.α), dropout, name = 'dense_' + str(l))
         else:
-            return tf.nn.dropout(n.activation(conv), dropout, name = 'conv_' + str(l))
+                return tf.nn.dropout(n.activation(tf.add(convolution(input_tensor, weights, [1] + n.layers[l][2] + [1], padding = n.layers[l][3]), biases)), dropout, name = 'dense_' + str(l))
 
-    def build_network(n, input_tensor, dropout):
+    def build_network(n, input_tensor, dropout, generic_output = True):
         # AUTO BUILD NETWORK
         #______________________________________________________________
         # CALLED FROM (DEFINED IN IMNN.py)
@@ -370,9 +382,12 @@ class IMNN():
                 if len(layer[-1].get_shape()) > 2:
                     layer.append(tf.reshape(layer[-1], (-1, np.prod(layer[-1].get_shape().as_list()[1:]))))
                 with tf.variable_scope('layer_' + str(l)):
-                    layer.append(n.dense(layer[-1], l, drop_val, last_layer = last_layer))
-            if n.verbose: print(layer[-1])
-        return layer[-1]
+                    if not last_layer:
+                        layer.append(n.dense(layer[-1], l, drop_val, last_layer = last_layer))
+                    else:
+                        output = n.dense(layer[-1], l, drop_val, last_layer = last_layer, generic_output = generic_output)
+            #if n.verbose: print(layer[-1])
+        return output
 
     def inverse_covariance(n, a):
         # CALCULATE THE INVERSE COVARIANCE, MEAN AND COVARIANCE
@@ -413,7 +428,7 @@ class IMNN():
         if n.verbose: print(iC)
         return iC, μ, C
 
-    def derivative_mean(n, a_m, a_p):
+    def derivative_mean(n, gradient = None, derivative_input = None, output_m = None, output_p = None):
         # CALCULATE THE DERIVATIVE OF THE MEAN OF THE SIMULATIONS
         #______________________________________________________________
         # CALLED FROM (DEFINED IN IMNN.py)
@@ -437,15 +452,21 @@ class IMNN():
         # a_p_                          tensor    - reshaped network outputs for upper parameter simulations
         # dμdθ                        n tensor    - numerical derivative of the mean of network outputs
         #______________________________________________________________
-        a_m_ = tf.reshape(a_m, (n.n_p, n.n_params, n.n_summaries), name = 'lower_output')
-        if n.verbose: print(a_m_)
-        a_p_ = tf.reshape(a_p, (n.n_p, n.n_params, n.n_summaries), name = 'upper_output')
-        if n.verbose: print(a_p_)
-        dμdθ = tf.divide(tf.einsum('ijk,j->jk', tf.subtract(a_p_, a_m_), n.dd), tf.constant(n.n_p, dtype = n._FLOATX), name = 'upper_lower_mean_derivative')
-        if n.verbose: print(dμdθ)
+        if not n.true_derivative:
+            a_m = tf.stack(tf.split(output_m, [n.n_p for i in range(n.n_params)], axis = 0), axis = 1)#tf.reshape(output_m, (n.n_p, n.n_params, n.n_summaries), name = 'lower_output')
+            if n.verbose: print(a_m)
+            a_p = tf.stack(tf.split(output_p, [n.n_p for i in range(n.n_params)], axis = 0), axis = 1)#tf.reshape(output_p, (n.n_p, n.n_params, n.n_summaries), name = 'upper_output')
+            if n.verbose: print(a_p)
+            dμdθ = tf.divide(tf.einsum('ijk,j->jk', tf.subtract(a_p, a_m), n.dd), tf.constant(n.n_p, dtype = n._FLOATX), name = 'upper_lower_mean_derivative')
+            if n.verbose: print(dμdθ)
+        else:
+            gr = tf.reshape(gradient, [n.n_p, n.n_params, np.prod(n.inputs)])
+            di = tf.stack(tf.split(derivative_input, [n.n_p for i in range(n.n_params)], axis = 0), axis = 1)
+            di = tf.reshape(derivative_input, [n.n_p, n.n_params, np.prod(n.inputs)])
+            dμdθ = tf.divide(tf.einsum('ijk,ilk->lj', gr, di), tf.constant(n.n_p, dtype = n._FLOATX))
         return dμdθ
 
-    def Fisher(n, a, a_m, a_p):
+    def Fisher(n, output, gradient = None, derivative_input = None, output_m = None, output_p = None):
         # CALCULATE THE FISHER INFORMATION
         #______________________________________________________________
         # CALLED FROM (DEFINED IN IMNN.py)
@@ -473,8 +494,13 @@ class IMNN():
         # dμdθ                          tensor    - numerical derivative of the mean of network outputs
         # F                             tensor    - Fisher information matrix
         #______________________________________________________________
-        iC, μ, C = n.inverse_covariance(a)
-        dμdθ = n.derivative_mean(a_m, a_p)
+        iC, μ, C = n.inverse_covariance(output)
+        if not n.true_derivative:
+            dμdθ = n.derivative_mean(output_m = output_m, output_p = output_p)
+
+        else:
+            dμdθ = n.derivative_mean(gradient = gradient, derivative_input = derivative_input)
+            #F_ = tf.einsum('i,i->i'tf.einsum('ij,j->i', iC, dμdθ)
         F = tf.matrix_band_part(tf.einsum('ij,kj->ik', dμdθ, tf.einsum('ij,kj->ki', iC, dμdθ)), 0, -1)
         F = 0.5 * (F + tf.transpose(F))
         return F, iC, μ, dμdθ, C
@@ -527,7 +553,8 @@ class IMNN():
         # iF                            tensor    - inverse Fisher information matrix from fiducial simulations
         #______________________________________________________________
         iF = tf.matrix_inverse(n.test_F)
-        return tf.expand_dims(n.θ_fid, 0) + tf.einsum("ij,kj->ki", iF, tf.einsum("ij,kj->ki", tf.einsum("ij,kj->ki", n.test_iC, n.test_dμdθ), n.output - tf.expand_dims(n.test_μ, 0)))
+        #return tf.expand_dims(n.θ_fid, 0) + tf.einsum("ij,kj->ki", iF, tf.einsum("ij,kj->ki", tf.einsum("ij,kj->ki", n.test_iC, n.test_dμdθ), n.output - tf.expand_dims(n.test_μ, 0)))
+        return tf.expand_dims(n.θ_fid, 0) + tf.einsum("ij,kj->ki", iF, tf.einsum("ij,kj->ki", n.test_dμdθ, tf.einsum("ij,kj->ki", n.test_iC, n.output - tf.expand_dims(n.test_μ, 0))))
 
     def loss(n, F, C):
         # CALCULATE THE LOSS FUNCTION
@@ -636,31 +663,44 @@ class IMNN():
                 n.derivative_indices = tf.placeholder(tf.int32, shape = [n.n_p, 1], name = "derivative_indices")
                 n.x_central = tf.constant(n.preload_data["x_central"], dtype = n._FLOATX, name = "x_central")
                 central_input = tf.gather_nd(n.x_central, n.central_indices)
-                n.x_m = tf.constant(n.preload_data["x_m"], dtype = n._FLOATX, name = "x_m")
-                x_m = tf.stop_gradient(n.x_m)
-                derivative_input_m = tf.reshape(tf.gather_nd(x_m, n.derivative_indices), [n.n_p * n.n_params] + n.inputs)
-                n.x_p = tf.constant(n.preload_data["x_p"], dtype = n._FLOATX, name = "x_p")
-                x_p = tf.stop_gradient(n.x_p)
-                derivative_input_p = tf.reshape(tf.gather_nd(x_p, n.derivative_indices), [n.n_p * n.n_params] + n.inputs)
-                if set(["x_central_test", "x_m_test", "x_p_test"]).issubset(n.preload_data.keys()):
-                    test_input = tf.constant(n.preload_data["x_central_test"], dtype = n._FLOATX)
-                    test_derivative_input_m = tf.reshape(tf.constant(n.preload_data["x_m_test"], dtype = n._FLOATX), [n.n_p * n.n_params] + n.inputs)
-                    test_derivative_input_p = tf.reshape(tf.constant(n.preload_data["x_p_test"], dtype = n._FLOATX), [n.n_p * n.n_params] + n.inputs)
+                if not n.true_derivative:
+                    n.x_m = tf.constant(n.preload_data["x_m"], dtype = n._FLOATX, name = "x_m")
+                    derivative_input_m = tf.concat(tf.unstack(tf.gather_nd(n.x_m, n.derivative_indices), axis = 1), axis = 0)
+                    n.x_p = tf.constant(n.preload_data["x_p"], dtype = n._FLOATX, name = "x_p")
+                    derivative_input_p = tf.concat(tf.unstack(tf.gather_nd(n.x_p, n.derivative_indices), axis = 1), axis = 0)
+                    if set(["x_central_test", "x_m_test", "x_p_test"]).issubset(n.preload_data.keys()):
+                        test_input = tf.constant(n.preload_data["x_central_test"], dtype = n._FLOATX)
+                        test_derivative_input_m = tf.concat(tf.unstack(tf.constant(n.preload_data["x_m_test"], dtype = n._FLOATX), axis = 1), axis = 0)
+                        test_derivative_input_p = tf.concat(tf.unstack(tf.constant(n.preload_data["x_p_test"], dtype = n._FLOATX), axis = 1), axis = 0)
+                    else:
+                        test_input = None
+                    n.dd = tf.constant(n.derivative_denominator, dtype = n._FLOATX, name = "dd")
                 else:
-                    test_input = None
+                    n.x_d = tf.constant(n.preload_data["x_d"], dtype = n._FLOATX, name = "x_d")
+                    derivative_input = tf.concat(tf.unstack(tf.gather_nd(n.x_d, n.derivative_indices), axis = 1), axis = 0)
+                    calc_derivative = central_input[:n.n_p]
+                    if set(["x_central_test", "x_d_test"]).issubset(n.preload_data.keys()):
+                        test_input = tf.constant(n.preload_data["x_central_test"], dtype = n._FLOATX)
+                        test_derivative_input = tf.concat(tf.unstack(tf.constant(n.preload_data["x_d_test"], dtype = n._FLOATX), axis = 1), axis = 0)
+                        test_calc_derivative = test_input[:n.n_p]
+                    else:
+                        test_input = None
             else:
                 n.x_central = tf.placeholder(n._FLOATX, shape = [n.n_s] + n.inputs, name = "x_central")
                 central_input = tf.identity(n.x_central)
-                n.x_m = tf.placeholder(n._FLOATX, shape = [n.n_p, n.n_params] + n.inputs, name = "x_m")
-                x_m = tf.stop_gradient(n.x_m)
-                derivative_input_m = tf.reshape(x_m, [n.n_p * n.n_params] + n.inputs)
-                n.x_p = tf.placeholder(n._FLOATX, shape = [n.n_p, n.n_params] + n.inputs, name = "x_p")
-                x_p = tf.stop_gradient(n.x_p)
-                derivative_input_p = tf.reshape(x_p, [n.n_p * n.n_params] + n.inputs)
+                if not n.true_derivative:
+                    n.x_m = tf.placeholder(n._FLOATX, shape = [n.n_p, n.n_params] + n.inputs, name = "x_m")
+                    derivative_input_m = tf.concat(tf.unstack(n.x_m, axis = 1), axis = 0)
+                    n.x_p = tf.placeholder(n._FLOATX, shape = [n.n_p, n.n_params] + n.inputs, name = "x_p")
+                    derivative_input_p = tf.concat(tf.unstack(np.x_p, axis = 1), axis = 0)
+                    n.dd = tf.constant(n.derivative_denominator, dtype = n._FLOATX, name = "dd")
+                else:
+                    n.x_d = tf.placeholder(n._FLOATX, shape = [n.n_p, n.n_params] + n.inputs, name = "x_d")
+                    derivative_input = tf.concat(tf.unstack(n.x_d, axis = 1), axis = 0)
+                    calc_derivative = central_input[:n.n_p]
             if n.get_MLE:
-                n.prior = tf.placeholder(dtype = n._FLOATX, shape = [None, n.n_params, 1000], name = "prior")
+                n.prior = tf.placeholder(dtype = n._FLOATX, shape = [n.n_params, None], name = "prior")
             n.θ_fid = tf.constant(n.fiducial_θ, dtype = n._FLOATX, name = "fiducial")
-            n.dd = tf.constant(n.derivative_denominator, dtype = n._FLOATX, name = "dd")
             n.dropout = tf.placeholder(n._FLOATX, shape = (), name = "dropout")
             if n.prebuild:
                 network = n.build_network
@@ -671,23 +711,56 @@ class IMNN():
             if n.verbose: print(n.output)
             with tf.variable_scope("IMNN") as scope:
                 scope.reuse_variables()
-                output_central = network(central_input, n.dropout)
-                scope.reuse_variables()
-                output_m = network(derivative_input_m, n.dropout)
-                scope.reuse_variables()
-                output_p = network(derivative_input_p, n.dropout)
+                output_central = network(central_input, n.dropout, generic_output = False)
+                if not n.true_derivative:
+                    scope.reuse_variables()
+                    output_m = network(derivative_input_m, n.dropout)
+                    scope.reuse_variables()
+                    output_p = network(derivative_input_p, n.dropout)
+                else:
+                    scope.reuse_variables()
+                    grad_output = network(calc_derivative, n.dropout)
+                    gradient = []
+                    for i in range(n.n_summaries):
+                        gr = tf.gradients(grad_output, calc_derivative)
+                        gradient.append(gr)
+                    gradient = tf.squeeze(tf.stack(gradient), axis = 1)
+                    gradient = tf.transpose(gradient, [1, 0] + [i for i in range(2, len(gradient.get_shape().as_list()))])
                 if n.preload_data is not None and test_input is not None:
                     scope.reuse_variables()
-                    test_output_central = network(test_input, 1.)
-                    scope.reuse_variables()
-                    test_output_m = network(test_derivative_input_m, 1.)
-                    scope.reuse_variables()
-                    test_output_p = network(test_derivative_input_p, 1.)
+                    test_output_central = network(test_input, 1., generic_output = False)
+                    if not n.true_derivative:
+                        scope.reuse_variables()
+                        test_output_m = network(test_derivative_input_m, 1.)
+                        scope.reuse_variables()
+                        test_output_p = network(test_derivative_input_p, 1.)
+                    else:
+                        scope.reuse_variables()
+                        test_grad_output = network(test_calc_derivative, 1.)
+                        test_gradient = []
+                        for i in range(n.n_summaries):
+                            test_gr = tf.gradients(test_grad_output, test_calc_derivative)
+                            test_gradient.append(test_gr)
+                        test_gradient = tf.squeeze(tf.stack(test_gradient), axis = 1)
+                        test_gradient = tf.transpose(test_gradient, [1, 0] + [i for i in range(2, len(test_gradient.get_shape().as_list()))])
                 else:
                     test_output_central = output_central
-                    test_output_m = output_m
-                    test_output_p = output_p
-            F, iC, μ, dμdθ, C = n.Fisher(output_central, output_m, output_p)
+                    if not n.true_derivative:
+                        test_output_m = output_m
+                        test_output_p = output_p
+                    else:
+                        scope.reuse_variables()
+                        test_grad_output = network(test_calc_derivative, 1.)
+                        test_gradient = []
+                        for i in range(n.n_summaries):
+                            test_gr = tf.gradients(test_grad_output, test_calc_derivative)
+                            test_gradient.append(test_gr)
+                        test_gradient = tf.squeeze(tf.stack(test_gradient))
+                        test_gradient = tf.transpose(test_gradient, [1, 0] + [i for i in range(2, len(test_gradient.get_shape().as_list()))])
+            if not n.true_derivative:
+                F, iC, μ, dμdθ, C = n.Fisher(output_central, output_m = output_m, output_p = output_p)
+            else:
+                F, iC, μ, dμdθ, C = n.Fisher(output_central, derivative_input = derivative_input, gradient = gradient)
             n.F = tf.identity(F, name = 'fisher_information')
             if n.verbose: print(n.F)
             n.iC = tf.identity(iC, name = 'inverse_covariance')
@@ -695,7 +768,10 @@ class IMNN():
             n.μ = tf.identity(μ, name = 'mean')
             n.dμdθ = tf.identity(dμdθ, name = 'mean_derivative')
             n.Λ = tf.identity(n.loss(n.F, n.C), name = 'loss')
-            test_F, test_iC, test_μ, test_dμdθ, test_C  = n.Fisher(test_output_central, test_output_m, test_output_p)
+            if not n.true_derivative:
+                test_F, test_iC, test_μ, test_dμdθ, test_C  = n.Fisher(test_output_central, output_m = test_output_m, output_p = test_output_p)
+            else:
+                test_F, test_iC, test_μ, test_dμdθ, test_C  = n.Fisher(test_output_central, derivative_input = test_derivative_input, gradient = test_gradient)
             n.test_F = tf.identity(test_F, name = "test_F")
             n.test_iC = tf.identity(test_iC, name = 'test_inverse_covariance')
             n.test_C = tf.identity(test_C, name = 'test_covariance')
@@ -705,8 +781,8 @@ class IMNN():
             if n.get_MLE:
                 n.MLE = tf.identity(n.maximum_likelihood_estimate(), name = "maximum_likelihood_estimate")
                 if n.verbose: print(n.MLE)
-                n.AL = tf.identity(n.calculate_asymptotic_likelihood(), name = "asymptotic_likelihood")
-                if n.verbose: print(n.AL)
+                #n.AL = tf.identity(n.calculate_asymptotic_likelihood(), name = "asymptotic_likelihood")
+                #if n.verbose: print(n.AL)
             n.training_scheme(η)
             n.begin_session()
 
@@ -728,7 +804,7 @@ class IMNN():
         # backpropagate               n tf opt    - minimisation scheme for the network
         #______________________________________________________________
         η = utils.utils().isfloat(η, key = 'η')
-        n.backpropagate = tf.train.AdamOptimizer(η).minimize(n.Λ)
+        n.backpropagate = tf.train.AdamOptimizer(η).minimize(n.Λ, global_step = tf.Variable(0.1, trainable = False))
         #n.backpropagate = tf.train.GradientDescentOptimizer(η).minimize(n.loss(n.F))
 
     def train(n, num_epochs, n_train, keep_rate, history = True, data = None, to_continue = False):
@@ -858,7 +934,7 @@ class IMNN():
                         #n.history["det(test iC)"].append(dettestiC[0] * dettestiC[1])
                         n.history["test dμdθ"].append(test_dμdθ)
                         n.history["test Λ"].append(test_Λ)
-                        tq.set_postfix(detF = n.history["det(F)"][-1], lndetF_test = n.history["det(test F)"][-1])
+                        tq.set_postfix(detF = n.history["det(F)"][-1], detF_test = n.history["det(test F)"][-1])
                     else:
                         if n.x_central.op.type != 'Placeholder':
                             μ, C, iC, dμdθ, Λ = n.sess.run([n.μ, n.C, n.iC, n.dμdθ, n.Λ], feed_dict = {n.central_indices: central_indices[combination * n.n_s: (combination + 1) * n.n_s].reshape((n.n_s, 1)), n.derivative_indices: derivative_indices[combination * n.n_p: (combination + 1) * n.n_p].reshape((n.n_p, 1)), n.dropout: 1.})
@@ -931,8 +1007,9 @@ class IMNN():
             else:
                 F = n.sess.run(n.test_F, feed_dict = {n.x_central: data['x_central_test'], n.x_m: data['x_m_test'], n.x_p: data['x_p_test'], n.dropout: 1.})
             summary = n.sess.run(n.output, feed_dict = {n.x: real_data, n.dropout: 1.})[0]
-            θ = np.array([prior.draw() for i in range(draws)])
+            #θ = np.array([prior.draw() for i in range(draws)])
             #θ = np.swapaxes(np.array([np.random.uniform(prior[0][i], prior[1][i], draws) for i in range(len(prior[0]))]), 0, 1)
+            θ = np.random.uniform(prior[0], prior[1], draws)
             if at_once:
                 simulations = generate_simulation(θ)
                 simulation_summaries = n.sess.run(n.output, feed_dict = {n.x: simulations, n.dropout: 1.})

@@ -12,7 +12,7 @@ import tqdm
 class Delfi():
 
     def __init__(self, data, prior, nde, \
-                 Finv, theta_fiducial, param_limits = None, param_names=None, nwalkers=100, \
+                 Finv, theta_fiducial, proposal_samples, posterior_samples, param_limits = None, param_names=None, nwalkers=100, \
                  posterior_chain_length=100, proposal_chain_length=100, \
                  rank=0, n_procs=1, comm=None, red_op=None, \
                  show_plot=True, results_dir = "", seed_generator = None):
@@ -54,7 +54,7 @@ class Delfi():
             self.upper = np.ones(self.npar)*np.finfo(np.float32).max
 
         # Asymptotic posterior
-        self.asymptotic_posterior = priors.TruncatedGaussian(self.theta_fiducial, self.Finv, self.lower, self.upper)
+        #self.asymptotic_posterior = priors.TruncatedGaussian(self.theta_fiducial, self.Finv, self.lower, self.upper)
 
         # Training data [initialize empty]
         self.ps = np.array([]).reshape(0,self.npar)
@@ -69,8 +69,11 @@ class Delfi():
         self.proposal_chain_length = proposal_chain_length
 
         # MCMC samples of learned posterior
-        self.posterior_samples = np.array([self.asymptotic_posterior.draw() for i in range(self.nwalkers*self.posterior_chain_length)])
-        self.proposal_samples = np.array([self.asymptotic_posterior.draw() for i in range(self.nwalkers*self.proposal_chain_length)])
+        self.proposal_samples = proposal_samples
+        self.posterior_samples = posterior_samples
+        #self.proposal_samples = np.array([self.asymptotic_posterior.draw() for i in range(self.nwalkers*self.proposal_chain_length)])
+        #self.posterior_samples = np.array([self.asymptotic_posterior.draw() for i in range(self.nwalkers*self.posterior_chain_length)])
+        
 
         # Parameter names and ranges for plotting with GetDist
         self.names = param_names
@@ -126,18 +129,20 @@ class Delfi():
     # Log posterior
     def log_posterior(self, x):
 
-        if self.prior.pdf(x) == 0:
-            return -1e300
-        else:
-            return self.log_likelihood(x) + np.log(self.prior.pdf(x))
+        #if self.prior.pdf(x) == 0:
+        #    return -1e300
+        #else:
+        #    return self.log_likelihood(x) + np.log(self.prior.pdf(x))
+        return self.log_likelihood(x)
 
     # Log posterior
     def log_geometric_mean_proposal(self, x):
 
-        if self.prior.pdf(x) == 0:
-            return -1e300
-        else:
-            return 0.5 * (self.log_likelihood(x) + 2 * np.log(self.prior.pdf(x)) )
+        #if self.prior.pdf(x) == 0:
+        #    return -1e300
+        #else:
+        #    return 0.5 * (self.log_likelihood(x) + 2 * np.log(self.prior.pdf(x)) )
+        return 0.5 * self.log_likelihood(x)
 
     # Run n_batch simulations
     def run_simulation_batch(self, n_batch, ps, simulator, compressor, simulator_args, compressor_args, seed_generator = None):
@@ -164,10 +169,11 @@ class Delfi():
                     parameter_samples[i_acpt,:] = ps[i_prop,:]
                     i_acpt += 1
                     pbar.update(1)
-                else:
-                    print(err_msg.format('NaN/inf', ps[i_prop,:], self.rank))
+                #else:
+                #    print(err_msg.format('NaN/inf', ps[i_prop,:], self.rank))
             except:
-                print(err_msg.format('exception', ps[i_prop,:], self.rank))
+                pass
+                #print(err_msg.format('exception', ps[i_prop,:], self.rank))
             i_prop += 1
 
         # Reduce results from all processes and return
@@ -208,7 +214,6 @@ class Delfi():
         # Set up the initial parameter proposal density
         if proposal is None:
             proposal = priors.TruncatedGaussian(self.data, 4*self.Finv, self.lower, self.upper)
-
         # Generate initial theta values from some broad proposal on
         # master process and share with other processes. Overpropose
         # by a factor of safety to (hopefully) cope gracefully with
@@ -223,14 +228,12 @@ class Delfi():
             self.comm.Bcast(ps, root=0)
         self.inds_prop = self.allocate_jobs(safety * n_initial)
         self.inds_acpt = self.allocate_jobs(n_initial)
-
         # Run simulations at those theta values
         if self.rank == 0:
             print('Running initial {} sims...'.format(n_initial))
         xs_batch, ps_batch = self.run_simulation_batch(n_initial, ps, simulator, compressor, simulator_args, compressor_args, seed_generator = seed_generator)
         if self.rank == 0:
             print('Done.')
-
         # Train on master only
         if self.rank == 0:
 
@@ -411,11 +414,11 @@ class Delfi():
             print('Generating fisher pre-training data...')
 
             # Anticipated covariance of the re-scaled data
-            #Cdd = np.zeros((self.npar, self.npar))
-            #for i in range(self.npar):
-            #    for j in range(self.npar):
-            #        Cdd[i,j] = self.Finv[i,j]/(self.fisher_errors[i]*self.fisher_errors[j])
-            Cdd = np.copy(self.Finv)
+            Cdd = np.zeros((self.npar, self.npar))
+            for i in range(self.npar):
+                for j in range(self.npar):
+                    Cdd[i,j] = self.Finv[i,j]/(self.fisher_errors[i]*self.fisher_errors[j])
+            #Cdd = np.copy(self.Finv)
             Ldd = np.linalg.cholesky(Cdd)
 
             # Sample parameters from some broad proposal
