@@ -1,2 +1,2 @@
-model_checkpoint_path: "tmp_model"
-all_model_checkpoint_paths: "tmp_model"
+model_checkpoint_path: "mdntmp_model"
+all_model_checkpoint_paths: "mdntmp_model"

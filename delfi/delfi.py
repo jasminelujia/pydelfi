@@ -7,6 +7,19 @@ import emcee
 import matplotlib.pyplot as plt
 import distributions.priors as priors
 import numpy as np
+import tqdm
+
+def isnotebook():
+    try:
+        shell = get_ipython().__class__.__name__
+        if shell == 'ZMQInteractiveShell':
+            return True   # Jupyter notebook or qtconsole
+        elif shell == 'TerminalInteractiveShell':
+            return False  # Terminal running IPython
+        else:
+            return False  # Other type (?)
+    except NameError:
+        return False
 
 class Delfi():
 
@@ -14,7 +27,7 @@ class Delfi():
                  Finv, theta_fiducial, param_limits = None, param_names=None, nwalkers=100, \
                  posterior_chain_length=1000, proposal_chain_length=100, \
                  rank=0, n_procs=1, comm=None, red_op=None, \
-                 show_plot=True, results_dir = "", seed_generator = None):
+                 show_plot=True, results_dir = "", progress_bar=True):
         
         # Data
         self.data = data
@@ -29,7 +42,7 @@ class Delfi():
         # Initialize the NDE and trainer
         self.nde = nde
         self.trainer = ndes.train.ConditionalTrainer(nde)
-        
+
         # Tensorflow session for the NDE training
         self.sess = tf.Session(config = tf.ConfigProto())
         self.sess.run(tf.global_variables_initializer())
@@ -95,6 +108,12 @@ class Delfi():
         else:
             self.use_mpi = False
 
+        # Are we in a jupyter notebook or not?
+        self.nb = isnotebook()
+
+        # Show progress bars?
+        self.progress_bar = progress_bar
+            
     # Divide list of jobs between MPI processes
     def allocate_jobs(self, n_jobs):
         n_j_allocated = 0
@@ -152,6 +171,11 @@ class Delfi():
         i_prop = self.inds_prop[0]
         i_acpt = self.inds_acpt[0]
         err_msg = 'Simulator returns {:s} for parameter values: {} (rank {:d})'
+        if self.progress_bar:
+            if self.nb:
+                pbar = tqdm.tqdm_notebook(total = self.inds_acpt[-1], desc = "Simulations")
+            else:
+                pbar = tqdm.tqdm(total = self.inds_acpt[-1], desc = "Simulations")
         while i_acpt <= self.inds_acpt[-1]:
             try:
                 sim = compressor(simulator(ps[i_prop,:], seed_generator(), simulator_args), compressor_args)
@@ -159,6 +183,8 @@ class Delfi():
                     data_samples[i_acpt,:] = sim
                     parameter_samples[i_acpt,:] = ps[i_prop,:]
                     i_acpt += 1
+                    if self.progress_bar:
+                        pbar.update(1)
                 else:
                     print(err_msg.format('NaN/inf', ps[i_prop,:], self.rank))
             except:
@@ -197,11 +223,11 @@ class Delfi():
 
     def sequential_training(self, simulator, compressor, n_initial, n_batch, n_populations, proposal = None, \
                             simulator_args = None, compressor_args = None, safety = 5, plot = True, batch_size=100, \
-                            validation_split=0.1, epochs=100, patience=20, seed_generator = None):
+                            validation_split=0.1, epochs=300, patience=20, seed_generator = None):
 
         # Set up the initial parameter proposal density
         if proposal is None:
-            proposal = priors.TruncatedGaussian(self.data, 4*self.Finv, self.lower, self.upper)
+            proposal = priors.TruncatedGaussian(self.data, 9*self.Finv, self.lower, self.upper)
 
         # Generate initial theta values from some broad proposal on
         # master process and share with other processes. Overpropose
@@ -219,11 +245,7 @@ class Delfi():
         self.inds_acpt = self.allocate_jobs(n_initial)
 
         # Run simulations at those theta values
-        if self.rank == 0:
-            print('Running initial {} sims...'.format(n_initial))
         xs_batch, ps_batch = self.run_simulation_batch(n_initial, ps, simulator, compressor, simulator_args, compressor_args, seed_generator = seed_generator)
-        if self.rank == 0:
-            print('Done.')
 
         # Train on master only
         if self.rank == 0:
@@ -239,7 +261,7 @@ class Delfi():
             self.n_sims = len(self.x_train)
 
             # Train the network on these initial simulations
-            val_loss, train_loss = self.trainer.train(self.sess, [self.x_train, self.y_train], validation_split = validation_split, epochs = epochs, batch_size=self.n_sims//10,
+            val_loss, train_loss = self.trainer.train(self.sess, [self.x_train, self.y_train], validation_split = validation_split, epochs = epochs, batch_size=max(self.n_sims//8, batch_size), progress_bar=self.progress_bar,
                   patience=patience, saver_name='{}tmp_model'.format(self.results_dir))
                   
             # Save the training and validation losses
@@ -297,11 +319,7 @@ class Delfi():
             # Run simulations
             self.inds_prop = self.allocate_jobs(safety * n_batch)
             self.inds_acpt = self.allocate_jobs(n_batch)
-            if self.rank == 0:
-                print('Running {} sims...'.format(n_batch))
             xs_batch, ps_batch = self.run_simulation_batch(n_batch, ps_batch, simulator, compressor, simulator_args, compressor_args, seed_generator = seed_generator)
-            if self.rank == 0:
-                print('Done.')
 
             # Train on master only
             if self.rank == 0:
@@ -316,7 +334,7 @@ class Delfi():
                 self.y_train = self.xs.astype(np.float32)
         
                 # Train the network on these initial simulations
-                val_loss, train_loss = self.trainer.train(self.sess, [self.x_train, self.y_train], validation_split=validation_split, epochs=epochs, batch_size=self.n_sims//10,
+                val_loss, train_loss = self.trainer.train(self.sess, [self.x_train, self.y_train], validation_split=validation_split, epochs=epochs, batch_size=max(self.n_sims//8, batch_size), progress_bar=self.progress_bar,
                            patience=patience, saver_name='{}tmp_model'.format(self.results_dir))
                            
                 # Save the training and validation losses
@@ -353,9 +371,7 @@ class Delfi():
     def train(self, plot=True, batch_size=100, validation_split=0.1, epochs=500, patience=20):
         
         # Train the network on these initial simulations
-        print('Training the neural density estimator...')
-        val_loss, train_loss = self.trainer.train(self.sess, [self.x_train, self.y_train], validation_split = validation_split, epochs=epochs, batch_size=batch_size,
-                           patience=patience, saver_name='{}tmp_model'.format(self.results_dir))
+        val_loss, train_loss = self.trainer.train(self.sess, [self.x_train, self.y_train], validation_split = validation_split, epochs=epochs, batch_size=batch_size, progress_bar=self.progress_bar, patience=patience, saver_name='{}tmp_model'.format(self.results_dir))
                            
         # Save the training and validation losses
         self.training_loss = np.concatenate([self.training_loss, train_loss])
@@ -377,7 +393,6 @@ class Delfi():
             
         # If plot == True, plot the current posterior estimate
         if plot == True:
-            print("Plotting the posterior (1D and 2D marginals)...")
             self.triangle_plot([self.posterior_samples], \
                                 savefig=True, \
                                 filename='{}post_trained.pdf'.format(self.results_dir))
@@ -391,15 +406,19 @@ class Delfi():
         self.x_train = self.ps.astype(np.float32)
         self.y_train = self.xs.astype(np.float32)
         self.n_sims += len(ps_batch)
-
-
-    def fisher_pretraining(self, n_batch, proposal, plot=True, batch_size=100, validation_split=0.1, epochs=100, patience=20):
+    
+    def fisher_pretraining(self, n_batch=50000, proposal=None, plot=True, batch_size=100, validation_split=0.1, epochs=300, patience=10):
 
         # Train on master only
         if self.rank == 0:
+            
+            # Proposal
+            if proposal is None:
+                proposal = self.prior
+            else:
+                proposal = proposal
 
             # Generate fisher pre-training data
-            print('Generating fisher pre-training data...')
 
             # Anticipated covariance of the re-scaled data
             Cdd = np.zeros((self.npar, self.npar))
@@ -407,24 +426,37 @@ class Delfi():
                 for j in range(self.npar):
                     Cdd[i,j] = self.Finv[i,j]/(self.fisher_errors[i]*self.fisher_errors[j])
             Ldd = np.linalg.cholesky(Cdd)
-
+            Cddinv = np.linalg.inv(Cdd)
+            ln2pidetCdd = np.log(2*np.pi*np.linalg.det(Cdd))
+            
             # Sample parameters from some broad proposal
             ps = np.zeros((n_batch, self.npar))
-            for i in range(0, n_batch):
+            for i in range(0, n_batch//2):
                 ps[i,:] = (proposal.draw() - self.theta_fiducial)/self.fisher_errors
-
+                ps[n_batch//2 + i,:] = (self.asymptotic_posterior.draw() - self.theta_fiducial)/self.fisher_errors
+            
             # Sample data assuming a Gaussian likelihood
             xs = np.array([pss + np.dot(Ldd, np.random.normal(0, 1, self.npar)) for pss in ps])
-
+            
+            # Compute logpdf at each point
+            #logpdf = np.zeros(n_batch)
+            #for i in range(0, n_batch):
+            #    logpdf[i] = -0.5*ln2pidetCdd - 0.5*np.dot(ps[i,:]-xs[i,:], np.dot(Cddinv, ps[i,:]-xs[i,:]))
+            
             # Construct the initial training-set
             fisher_x_train = ps.astype(np.float32).reshape((n_batch, self.npar))
             fisher_y_train = xs.astype(np.float32).reshape((n_batch, self.npar))
-
+            #fisher_L_train = logpdf.astype(np.float32)
+            
             # Train network on initial (asymptotic) simulations
-            print('Training the neural density estimator...')
+            
             # Train the network on these initial simulations
-            validation_loss, train_loss = self.trainer.train(self.sess, [fisher_x_train, fisher_y_train], validation_split = validation_split, epochs=epochs, batch_size=batch_size, patience=patience, saver_name='{}tmp_model'.format(self.results_dir))
-            print('Done.')
+            #if loss is "sample":
+            validation_loss, train_loss = self.trainer.train(self.sess, [fisher_x_train, fisher_y_train], validation_split = validation_split, epochs=epochs, batch_size=batch_size, progress_bar=self.progress_bar, patience=patience, saver_name='{}tmp_model'.format(self.results_dir))
+                #elif loss is "regression":
+                #validation_loss, train_loss = self.reg_trainer.train(self.sess, [fisher_x_train, #fisher_y_train, fisher_L_train], validation_split = validation_split, epochs=epochs, batch_size=batch_size, patience=patience, saver_name='{}tmp_model'.format(self.results_dir))
+                #else:
+                #print('Loss option not recognised.')
             
             # Initialization for the EMCEE sampling
             x0 = [self.posterior_samples[-i,:] for i in range(self.nwalkers)]
@@ -435,7 +467,6 @@ class Delfi():
 
             # if plot == True
             if plot == True:
-                print('Plotting the posterior (1D and 2D marginals)...')
                 self.triangle_plot([self.posterior_samples], \
                                     savefig=True, \
                                     filename='{}fisher_pretrain_post.pdf'.format(self.results_dir))
@@ -461,7 +492,6 @@ class Delfi():
         plt.subplots_adjust(hspace=0, wspace=0)
         
         if savefig:
-            print('Saving ' + filename)
             plt.savefig(filename)
         if self.show_plot:
             plt.show()
@@ -488,9 +518,9 @@ class Delfi():
                           'axes.edgecolor': 'black'})
                                               
         # Trace plot of the training and validation loss as a function of the number of simulations ran
-        plt.scatter(self.sequential_nsims, self.sequential_training_loss, s = 20, alpha = 0.5)
+        plt.scatter(self.sequential_nsims, self.sequential_training_loss, s = 20, alpha = 0.5, color = 'red')
         plt.plot(self.sequential_nsims, self.sequential_training_loss, color = 'red', lw = 2, alpha = 0.5, label = 'training loss')
-        plt.scatter(self.sequential_nsims, self.sequential_validation_loss, s = 20, alpha = 0.5)
+        plt.scatter(self.sequential_nsims, self.sequential_validation_loss, s = 20, alpha = 0.5, color = 'blue')
         plt.plot(self.sequential_nsims, self.sequential_validation_loss, color = 'blue', lw = 2, alpha = 0.5, label = 'validation loss')
 
         # Stick a band in to show +-0.1
@@ -503,7 +533,6 @@ class Delfi():
         plt.legend()
 
         if savefig:
-            print('Saving ' + filename)
             plt.savefig(filename)
         if self.show_plot:
             plt.show()

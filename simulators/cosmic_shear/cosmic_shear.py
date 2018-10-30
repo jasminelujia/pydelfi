@@ -238,7 +238,7 @@ class TomographicCosmicShearPhotoz():
         z = np.linspace(0, self.pz[0].get_knots()[-1], len(self.pz[0].get_knots()))
         pz_new = [0]*self.nz
         for i in range(self.nz):
-            p = self.pz[i](z+theta[i])
+            p = self.pz[i](z+theta[5+i])
             p = p/np.trapz(p, z)
             pz_new[i] = interpolate.InterpolatedUnivariateSpline(z, p, k=3)
         
@@ -448,7 +448,7 @@ class TomographicCosmicShearPhotoz():
                     intvals = ((l/(l+0.5))**4)*A*(1.0/rs**2)* (w[i](rs)*dwdb[j](rs) + dwdb[i](rs)*w[j](rs)) * (1+z(rs))**2 * np.exp(logpkz.ev(np.log((l+0.5)/(h*rs*r_hubble)), z(rs)))
                     cls[L, i, j] = integrate.romb(intvals, dr)
                     cls[L, j, i] = cls[L, i, j]
-            cls[L,:,:] = cls[L,:,:] + self.N
+            cls[L,:,:] = cls[L,:,:]
                     
         return cls
 

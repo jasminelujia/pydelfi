@@ -176,6 +176,7 @@ def simulate(theta, sim_args, seed=None):
     l_max = sim_args[2]
     sig_n_p = sim_args[3]
     mask = sim_args[4]
+    n_ell_bins = sim_args[5]
     nz = len(pz_fid)
     
     # Photo-z parameters
@@ -192,5 +193,16 @@ def simulate(theta, sim_args, seed=None):
     
     # Realize noisy power spectrum
     C_hat = cl_to_cl_hat(C, l_min, l_max, sig_n_p, mask, seed=seed)
-    
-    return C_hat
+
+    # Bin up the power spectra
+    l = np.linspace(l_min, l_max, l_max-l_min+1)
+    bin_edges = np.linspace(l_min, l_max, n_ell_bins+1)
+
+    d = np.array([])
+    for k in range(n_ell_bins):
+        l_selection = (l >= bin_edges[k])*(l < bin_edges[k+1])
+        C_hat_k = np.mean(C_hat[:,:,l_selection], axis=-1)
+        x = np.tril(C_hat_k).flatten()
+        ind = np.nonzero(x)
+        d = np.concatenate([d, x[ind]])
+    return d

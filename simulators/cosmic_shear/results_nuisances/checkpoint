@@ -1,0 +1,2 @@
+model_checkpoint_path: "maftmp_model"
+all_model_checkpoint_paths: "maftmp_model"

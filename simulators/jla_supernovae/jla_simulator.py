@@ -1,7 +1,6 @@
 import numpy as np
 import scipy.integrate as integrate
-import .jla_parser as jla_parser
-
+import simulators.jla_supernovae.jla_parser as jla_parser
 
 class JLA_Model():
 
@@ -27,20 +26,11 @@ class JLA_Model():
         self.n_sn = len(self.C)
         self.dCdt = np.zeros((self.npar, self.n_sn, self.n_sn))
 
-        # Step size for derivatives
-        self.step = abs(0.01*self.theta_fiducial)
-
         # N data points
-        nself.data = len(self.jla_data['mb'])
+        self.ndata = len(jla_data['mb'])
 
         # Compute the mean
-        self.mu = jla.apparent_magnitude(self.theta_fiducial, self.auxiliary_data)
-
-        # Compute the derivatives
-        self.dmdt = self.dmudtheta(theta_fiducial, self.step)
-
-        # Fisher matrix
-        self.F, self.Finv = jla.fisher(dmdt, dCdt, Cinv, Qinv, npar)
+        self.mu = self.apparent_magnitude(self.theta_fiducial)
 
     # Distance modulus
     def apparent_magnitude(self, theta):
@@ -72,10 +62,13 @@ class JLA_Model():
         return Mb - alpha*x + beta*c + delta_m*v3 + distance_modulus
 
     # Generate realisation of \mu
-    def simulation(self, theta):
+    def simulation(self, theta, seed):
+        
+        # Set the seed
+        np.random.seed(seed)
 
         # Signal
-        mb = apparent_magnitude(theta, self.auxiliary_data)
+        mb = self.apparent_magnitude(theta)
         
         # Noise
         noise = np.dot(self.L, np.random.normal(0, 1, len(self.L)))
@@ -84,26 +77,26 @@ class JLA_Model():
         return mb + noise
 
     # Generate derivative of \mu w.r.t cosmological parameters
-    def dmudt(theta_fiducial, h):
+    def dmudt(self, theta_fiducial, h):
         
         # dmdt
         dmdt = np.zeros((self.npar, self.ndata))
         
         # Fiducial data
-        d_fiducial = self.apparent_magnitude(self.theta_fiducial)
+        d_fiducial = self.apparent_magnitude(theta_fiducial)
         
         # Loop over parameters
         for i in range(0, 2):
             
             # Step theta
             theta = np.copy(self.theta_fiducial)
-            theta[i] += step[i]
+            theta[i] += h[i]
             
             # Shifted data with same seed
             d_dash = self.apparent_magnitude(theta)
             
             # One step derivative
-            dmdt[i,:] = (d_dash - d_fiducial)/step[i]
+            dmdt[i,:] = (d_dash - d_fiducial)/h[i]
         
         dmdt[2,:] = np.ones(self.n_sn)
         dmdt[3,:] = -self.auxiliary_data[:,1]

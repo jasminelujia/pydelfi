@@ -24,7 +24,7 @@ class ConditionalMaskedAutoregressiveFlow:
     """
 
     def __init__(self, n_inputs, n_outputs, n_hiddens, act_fun, n_mades, batch_norm=False, momentum=0.2,
-                 output_order='sequential', mode='sequential', input=None, output=None):
+                 output_order='sequential', mode='sequential', input=None, output=None, logpdf=None):
         """
         Constructor.
         :param n_inputs: number of (conditional) inputs
@@ -52,6 +52,7 @@ class ConditionalMaskedAutoregressiveFlow:
 
         self.input = tf.placeholder(dtype=dtype,shape=[None,n_inputs],name='x') if input is None else input
         self.y = tf.placeholder(dtype=dtype,shape=[None,n_outputs],name='y') if output is None else output
+        self.logpdf = tf.placeholder(dtype=dtype,shape=[None],name='logpdf') if logpdf is None else logpdf
         self.training = tf.placeholder_with_default(False,shape=(),name="training")
         self.parms = []
 
@@ -86,11 +87,11 @@ class ConditionalMaskedAutoregressiveFlow:
         self.output_order = self.mades[0].output_order
 
         # log likelihoods
-        self.L = tf.add(-0.5 * n_outputs * np.log(2 * np.pi) - 0.5 * tf.reduce_sum(self.u ** 2, axis=1,keepdims=True),
-                        self.logdet_dudy,name='L')
+        self.L = tf.add(-0.5 * n_outputs * np.log(2 * np.pi) - 0.5 * tf.reduce_sum(self.u ** 2, axis=1,keepdims=True), self.logdet_dudy,name='L')
 
         # train objective
         self.trn_loss = -tf.reduce_mean(self.L,name='trn_loss')
+        self.trn_loss_reg = tf.abs(tf.reduce_mean(tf.subtract(self.L, self.logpdf)), name = "trn_loss_reg")
 
     def eval(self, xy, sess, log=True):
         """
@@ -148,7 +149,7 @@ class MixtureDensityNetwork:
     """
 
     def __init__(self, n_inputs, n_outputs, n_components = 3, n_hidden=[50,50], activations=[tf.tanh, tf.tanh],
-                 input=None, output=None, batch_norm=False):
+                 input=None, output=None, logpdf=None, batch_norm=False):
         """
         Constructor.
         :param n_inputs: number of (conditional) inputs
@@ -170,6 +171,7 @@ class MixtureDensityNetwork:
         
         self.input = tf.placeholder(dtype=dtype,shape=[None,self.P],name='x') if input is None else input
         self.y = tf.placeholder(dtype=dtype,shape=[None,self.D],name='y') if output is None else output
+        self.logpdf = tf.placeholder(dtype=dtype,shape=[None],name='logpdf') if logpdf is None else logpdf
         self.training = tf.placeholder_with_default(False,shape=(),name="training")
         
         # Build the layers of the network
@@ -204,6 +206,7 @@ class MixtureDensityNetwork:
 
         # Objective loss function
         self.trn_loss = -tf.reduce_mean(self.L, name = "trn_loss")
+        self.trn_loss_reg = -tf.reduce_mean(tf.subtract(self.L, self.logpdf), name = "trn_loss_reg")
         
 
     # Build lower triangular from network output (also calculate determinant)
