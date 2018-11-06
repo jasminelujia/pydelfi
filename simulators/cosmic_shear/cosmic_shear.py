@@ -55,7 +55,43 @@ class TomographicCosmicShear():
             C_hat[i, :, :] = wishart.rvs(df=self.nl[i], scale=C[i, :,:])/self.nl[i]
     
         return C_hat
+    
+    def simulate_batch(self, theta, seed, batch):
 
+        # Set the seed
+        np.random.seed(seed)
+        
+        # Compute theory power spectrum
+        C = self.power_spectrum(theta) - self.N
+    
+        # Compute the Cholseky power spectra
+        L = np.array([np.linalg.cholesky(C[i,:,:]) for i in range(self.n_ell_bins)])
+        L_N = np.linalg.cholesky(self.N)
+    
+        # Generate random field
+        f = [0]*self.n_ell_bins
+        for i in range(self.n_ell_bins):
+            f[i] = np.array([np.dot(L[i,:,:], np.random.normal(0, 1, self.nz)) for k in range(self.nl[i])])
+
+        # Generate batch of sims with different noise realizations
+        sims = np.zeros((batch, self.n_ell_bins, self.nz, self.nz))
+        for s in range(batch):
+            
+            # Generate noise realization
+            n = [0]*self.n_ell_bins
+            for i in range(self.n_ell_bins):
+                n[i] = np.array([np.dot(L_N, np.random.normal(0, 1, self.nz)) for k in range(self.nl[i])])
+
+            # Add noise
+            fn = f + n
+
+            # Compute power for each ell bin
+            for i in range(self.n_ell_bins):
+                for j in range(self.nl[i]):
+                    sims[s,i,:,:] += np.outer(fn[i][j], fn[i][j])/self.nl[i]
+
+        return sims
+            
     # Compute the data vector
     def power_spectrum(self, theta):
 

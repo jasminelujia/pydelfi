@@ -156,15 +156,15 @@ class Delfi():
             return 0.5 * (self.log_likelihood(x) + 2 * np.log(self.prior.pdf(x)) )
     
     # Run n_batch simulations
-    def run_simulation_batch(self, n_batch, ps, simulator, compressor, simulator_args, compressor_args, seed_generator = None):
+    def run_simulation_batch(self, n_batch, ps, simulator, compressor, simulator_args, compressor_args, seed_generator = None, sub_batch = 1):
         
         # Random seed generator: set to unsigned 32 bit int random numbers as default
         if seed_generator is None:
             seed_generator = lambda: np.random.randint(2147483647)
         
         # Dimension outputs
-        data_samples = np.zeros((n_batch, self.npar))
-        parameter_samples = np.zeros((n_batch, self.npar))
+        data_samples = np.zeros((n_batch*sub_batch, self.npar))
+        parameter_samples = np.zeros((n_batch*sub_batch, self.npar))
         
         # Run samples assigned to each process, catching exceptions 
         # (when simulator returns np.nan).
@@ -178,10 +178,11 @@ class Delfi():
                 pbar = tqdm.tqdm(total = self.inds_acpt[-1], desc = "Simulations")
         while i_acpt <= self.inds_acpt[-1]:
             try:
-                sim = compressor(simulator(ps[i_prop,:], seed_generator(), simulator_args), compressor_args)
-                if np.all(np.isfinite(sim.flatten())):
-                    data_samples[i_acpt,:] = sim
-                    parameter_samples[i_acpt,:] = ps[i_prop,:]
+                sims = np.atleast_2d(simulator(ps[i_prop,:], seed_generator(), simulator_args, sub_batch))
+                compressed_sims = np.array([compressor(sims[k], compressor_args) for k in range(sub_batch)])
+                if np.all(np.isfinite(compressed_sims.flatten())):
+                    data_samples[i_acpt*sub_batch:i_acpt*sub_batch+sub_batch,:] = compressed_sims
+                    parameter_samples[i_acpt*sub_batch:i_acpt*sub_batch+sub_batch,:] = ps[i_prop,:]
                     i_acpt += 1
                     if self.progress_bar:
                         pbar.update(1)
@@ -222,8 +223,9 @@ class Delfi():
             return lnL
 
     def sequential_training(self, simulator, compressor, n_initial, n_batch, n_populations, proposal = None, \
-                            simulator_args = None, compressor_args = None, safety = 5, plot = True, batch_size=100, \
-                            validation_split=0.1, epochs=300, patience=20, seed_generator = None):
+                            simulator_args = None, compressor_args = None, safety = 5, plot = True, batch_size = 100, \
+                            validation_split = 0.1, epochs = 300, patience = 20, seed_generator = None, \
+                            save_intermediate_posteriors = True, sub_batch = 1):
 
         # Set up the initial parameter proposal density
         if proposal is None:
@@ -245,7 +247,7 @@ class Delfi():
         self.inds_acpt = self.allocate_jobs(n_initial)
 
         # Run simulations at those theta values
-        xs_batch, ps_batch = self.run_simulation_batch(n_initial, ps, simulator, compressor, simulator_args, compressor_args, seed_generator = seed_generator)
+        xs_batch, ps_batch = self.run_simulation_batch(n_initial, ps, simulator, compressor, simulator_args, compressor_args, seed_generator = seed_generator, sub_batch = sub_batch)
 
         # Train on master only
         if self.rank == 0:
@@ -279,7 +281,10 @@ class Delfi():
                                   main_chain=self.posterior_chain_length)
             
             # Save posterior samples to file
-            f = open('{}posterior_samples.dat'.format(self.results_dir), 'w')
+            if save_intermediate_posteriors:
+                f = open('{}posterior_samples_0.dat'.format(self.results_dir), 'w')
+            else:
+                f = open('{}posterior_samples.dat'.format(self.results_dir), 'w')
             np.savetxt(f, self.posterior_samples)
             f.close()
             
@@ -319,7 +324,7 @@ class Delfi():
             # Run simulations
             self.inds_prop = self.allocate_jobs(safety * n_batch)
             self.inds_acpt = self.allocate_jobs(n_batch)
-            xs_batch, ps_batch = self.run_simulation_batch(n_batch, ps_batch, simulator, compressor, simulator_args, compressor_args, seed_generator = seed_generator)
+            xs_batch, ps_batch = self.run_simulation_batch(n_batch, ps_batch, simulator, compressor, simulator_args, compressor_args, seed_generator = seed_generator, sub_batch = sub_batch)
 
             # Train on master only
             if self.rank == 0:
@@ -352,7 +357,10 @@ class Delfi():
                                       main_chain=self.posterior_chain_length)
                 
                 # Save posterior samples to file
-                f = open('{}posterior_samples.dat'.format(self.results_dir), 'w')
+                if save_intermediate_posteriors:
+                    f = open('{}posterior_samples_{:d}.dat'.format(self.results_dir, i+1), 'w')
+                else:
+                    f = open('{}posterior_samples.dat'.format(self.results_dir), 'w')
                 np.savetxt(f, self.posterior_samples)
                 f.close()
 
@@ -407,18 +415,15 @@ class Delfi():
         self.y_train = self.xs.astype(np.float32)
         self.n_sims += len(ps_batch)
     
-    def fisher_pretraining(self, n_batch=50000, proposal=None, plot=True, batch_size=100, validation_split=0.1, epochs=300, patience=10):
+    def fisher_pretraining(self, n_batch=50000, plot=True, batch_size=100, validation_split=0.1, epochs=300, patience=10):
 
         # Train on master only
         if self.rank == 0:
-            
-            # Proposal
-            if proposal is None:
-                proposal = self.prior
-            else:
-                proposal = proposal
 
             # Generate fisher pre-training data
+            
+            # Broader proposal
+            proposal = priors.TruncatedGaussian(self.theta_fiducial, 9*self.Finv, self.lower, self.upper)
 
             # Anticipated covariance of the re-scaled data
             Cdd = np.zeros((self.npar, self.npar))
@@ -430,10 +435,16 @@ class Delfi():
             ln2pidetCdd = np.log(2*np.pi*np.linalg.det(Cdd))
             
             # Sample parameters from some broad proposal
-            ps = np.zeros((n_batch, self.npar))
-            for i in range(0, n_batch//2):
-                ps[i,:] = (proposal.draw() - self.theta_fiducial)/self.fisher_errors
-                ps[n_batch//2 + i,:] = (self.asymptotic_posterior.draw() - self.theta_fiducial)/self.fisher_errors
+            ps = np.zeros((3*n_batch, self.npar))
+            for i in range(0, n_batch):
+                # Draws from prior
+                ps[i,:] = (self.prior.draw() - self.theta_fiducial)/self.fisher_errors
+                
+                # Draws from asymptotic posterior
+                ps[n_batch + i,:] = (self.asymptotic_posterior.draw() - self.theta_fiducial)/self.fisher_errors
+                
+                # Drawn from Gaussian with 3x anticipated covariance matrix
+                ps[2*n_batch + i,:] = (proposal.draw() - self.theta_fiducial)/self.fisher_errors
             
             # Sample data assuming a Gaussian likelihood
             xs = np.array([pss + np.dot(Ldd, np.random.normal(0, 1, self.npar)) for pss in ps])
@@ -444,8 +455,8 @@ class Delfi():
             #    logpdf[i] = -0.5*ln2pidetCdd - 0.5*np.dot(ps[i,:]-xs[i,:], np.dot(Cddinv, ps[i,:]-xs[i,:]))
             
             # Construct the initial training-set
-            fisher_x_train = ps.astype(np.float32).reshape((n_batch, self.npar))
-            fisher_y_train = xs.astype(np.float32).reshape((n_batch, self.npar))
+            fisher_x_train = ps.astype(np.float32).reshape((3*n_batch, self.npar))
+            fisher_y_train = xs.astype(np.float32).reshape((3*n_batch, self.npar))
             #fisher_L_train = logpdf.astype(np.float32)
             
             # Train network on initial (asymptotic) simulations

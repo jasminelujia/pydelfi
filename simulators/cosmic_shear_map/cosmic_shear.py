@@ -13,6 +13,36 @@ from .cosmology import *
 import scipy.constants as sc
 import healpy as hp
 import numpy.random as npr
+import os
+
+class suppress_stdout_stderr(object):
+    '''
+    A context manager for doing a "deep suppression" of stdout and stderr in
+    Python, i.e. will suppress all print, even if the print originates in a
+    compiled C/Fortran sub-function.
+       This will not suppress raised exceptions, since exceptions are printed
+    to stderr just before a script exits, and after the context manager has
+    exited (at least, I think that is why it lets exceptions through).
+
+    '''
+    def __init__(self):
+        # Open a pair of null files
+        self.null_fds = [os.open(os.devnull, os.O_RDWR) for x in range(2)]
+        # Save the actual stdout (1) and stderr (2) file descriptors.
+        self.save_fds = [os.dup(1), os.dup(2)]
+
+    def __enter__(self):
+        # Assign the null pointers to stdout and stderr.
+        os.dup2(self.null_fds[0], 1)
+        os.dup2(self.null_fds[1], 2)
+
+    def __exit__(self, *_):
+        # Re-assign the real stdout/stderr back to (1) and (2)
+        os.dup2(self.save_fds[0], 1)
+        os.dup2(self.save_fds[1], 2)
+        # Close the null files
+        for fd in self.null_fds + self.save_fds:
+            os.close(fd)
 
 # Compute the data vector
 def power_spectrum(theta, pz, l_min, l_max):
@@ -119,8 +149,8 @@ def a_lm_r_to_c(a_lm_r):
 
     # convert real a_lm array to complex
     n_fields, n_a_lm_r = a_lm_r.shape
-    el = (n_a_lm_r - 1) / 2
-    a_lm_c = np.zeros((n_fields, el + 1), 'complex')
+    el = (n_a_lm_r - 1) // 2
+    a_lm_c = np.zeros((n_fields, int(el + 1)), 'complex')
     a_lm_c[:, 0] = a_lm_r[:, el] + 0.0j
     for m in range(1, el + 1):
         a_lm_c[:, m] = a_lm_r[:, el + m] / np.sqrt(2.0) - \
@@ -131,7 +161,7 @@ def cl_to_cl_hat(cls, l_min, l_max, sig_n_p, mask, seed=None):
 
     # setup
     n_l = l_max - l_min + 1
-    n_a_lm_c = (l_max + 1) * (l_max + 2) / 2
+    n_a_lm_c = int((l_max + 1) * (l_max + 2) / 2)
     n_fields, n_pix = mask.shape
     n_side = hp.npix2nside(n_pix)
     
@@ -148,15 +178,15 @@ def cl_to_cl_hat(cls, l_min, l_max, sig_n_p, mask, seed=None):
         ems = np.arange(el + 1)
         cov_chol = np.linalg.cholesky(cls[:, :, i])
         a_lm_r = np.dot(cov_chol, npr.randn(n_fields, 2 * el + 1))
-        inds = ems * (2 * l_max + 1 - ems) / 2 + el
+        inds = ems * (2 * l_max + 1 - ems) // 2 + el
         a_lm_c[:, inds] = a_lm_r_to_c(a_lm_r)
 
     # project to map and add pixel noise and mask, then transform back to alm
     field = np.zeros((n_fields, n_pix))
     for i in range(0, n_fields):
+        #with suppress_stdout_stderr():
         field[i, :] = (hp.alm2map(a_lm_c[i, :], n_side) + \
-                       npr.randn(n_pix) * np.sqrt(sig_n_p[i,:])) * \
-                       mask[i, :]
+                       npr.randn(n_pix) * np.sqrt(sig_n_p[i,:])) * mask[i, :]
         a_lm_c[i, :] = hp.map2alm(field[i, :], lmax=l_max, mmax=l_max)
 
     # compute observed power spectra
@@ -169,40 +199,110 @@ def cl_to_cl_hat(cls, l_min, l_max, sig_n_p, mask, seed=None):
 
     return c_l_hat
 
-def simulate(theta, sim_args, seed=None):
+def cl_to_maps(cls, l_min, l_max, mask):
+
+    # setup
+    n_l = l_max - l_min + 1
+    n_a_lm_c = int((l_max + 1) * (l_max + 2) / 2)
+    n_fields, n_pix = mask.shape
+    n_side = hp.npix2nside(n_pix)
     
-    pz_fid = sim_args[0]
-    l_min = sim_args[1]
-    l_max = sim_args[2]
-    sig_n_p = sim_args[3]
-    mask = sim_args[4]
-    n_ell_bins = sim_args[5]
+    # draw some a_lms
+    a_lm_c = np.zeros((n_fields, n_a_lm_c), 'complex')
+    for i in range(0, n_l):
+
+        # generate 2l+1 real a_lms and convert to l+1 complex a_lms
+        # with appropriate variance. use Healpy/C++ indexing. calculate
+        # observed covariance for score compression
+        el = l_min + i
+        ems = np.arange(el + 1)
+        cov_chol = np.linalg.cholesky(cls[:, :, i])
+        a_lm_r = np.dot(cov_chol, npr.randn(n_fields, 2 * el + 1))
+        inds = ems * (2 * l_max + 1 - ems) // 2 + el
+        a_lm_c[:, inds] = a_lm_r_to_c(a_lm_r)
+
+    # project to map and add pixel noise and mask, then transform back to alm
+    field = np.zeros((n_fields, n_pix))
+    for i in range(0, n_fields):
+        #with suppress_stdout_stderr():
+        field[i, :] = hp.alm2map(a_lm_c[i, :], n_side)
+
+    return field
+
+def maps_to_cl_hat(field, l_min, l_max, sig_n_p, mask):
+
+    # setup
+    n_l = l_max - l_min + 1
+    n_a_lm_c = int((l_max + 1) * (l_max + 2) / 2)
+    n_fields, n_pix = mask.shape
+    n_side = hp.npix2nside(n_pix)
+    a_lm_c = np.zeros((n_fields, n_a_lm_c), 'complex')
+
+    # project to map and add pixel noise and mask, then transform back to alm
+    noisy_masked_field = np.zeros((n_fields, n_pix))
+    for i in range(0, n_fields):
+        #with suppress_stdout_stderr():
+        noisy_masked_field[i, :] = (field[i, :] + \
+                       npr.randn(n_pix) * np.sqrt(sig_n_p[i,:])) * \
+                       mask[i, :]
+        a_lm_c[i, :] = hp.map2alm(noisy_masked_field[i, :], lmax=l_max, mmax=l_max)
+
+    # compute observed power spectra
+    c_l_hat = np.zeros((n_fields, n_fields, n_l))
+    for i in range(n_fields):
+        for j in range(i + 1):
+            c_l_hat[i, j, :] = hp.alm2cl(alms1 = a_lm_c[i, :], alms2 = a_lm_c[j, :], \
+                                          lmax=l_max, mmax=l_max)[l_min:]
+            c_l_hat[j, i, :] = c_l_hat[i, j, :]
+
+    return c_l_hat
+
+
+def simulate(theta, seed, simulator_args, batch):
+    
+    # Set the seed
+    np.random.seed(seed)
+    
+    pz_fid = simulator_args[0]
+    l_min = simulator_args[1]
+    l_max = simulator_args[2]
+    sig_n_p = simulator_args[3]
+    mask = simulator_args[4]
+    n_ell_bins = simulator_args[5]
     nz = len(pz_fid)
     
     # Photo-z parameters
-    z = np.linspace(0, pz_fid[0].get_knots()[-1], len(pz_fid[0].get_knots()))
-    pz_new = [0]*nz
-    for i in range(nz):
-        p = pz_fid[i](z+theta[5+i])
-        p = p/np.trapz(p, z)
-        pz_new[i] = interpolate.InterpolatedUnivariateSpline(z, p, k=3)
-    pz = pz_new
+    #z = np.linspace(0, pz_fid[0].get_knots()[-1], len(pz_fid[0].get_knots()))
+    #pz_new = [0]*nz
+    #for i in range(nz):
+    #    p = pz_fid[i](z+theta[5+i])
+    #    p = p/np.trapz(p, z)
+    #    pz_new[i] = interpolate.InterpolatedUnivariateSpline(z, p, k=3)
+    #pz = pz_new
+    pz = pz_fid
     
     # Compute theory power spectrum
     C = power_spectrum(theta, pz, l_min, l_max)
     
-    # Realize noisy power spectrum
-    C_hat = cl_to_cl_hat(C, l_min, l_max, sig_n_p, mask, seed=seed)
+    # Create realization of field
+    field = cl_to_maps(C, l_min, l_max, mask)
+    
+    sims = np.zeros((batch, n_ell_bins*nz*(nz+1)//2))
+    for i in range(batch):
+    
+        # Realize noisy power spectrum
+        C_hat = maps_to_cl_hat(field, l_min, l_max, sig_n_p, mask)
 
-    # Bin up the power spectra
-    l = np.linspace(l_min, l_max, l_max-l_min+1)
-    bin_edges = np.linspace(l_min, l_max, n_ell_bins+1)
+        # Bin up the power spectra
+        l = np.linspace(l_min, l_max, l_max-l_min+1)
+        bin_edges = np.linspace(l_min, l_max, n_ell_bins+1)
 
-    d = np.array([])
-    for k in range(n_ell_bins):
-        l_selection = (l >= bin_edges[k])*(l < bin_edges[k+1])
-        C_hat_k = np.mean(C_hat[:,:,l_selection], axis=-1)
-        x = np.tril(C_hat_k).flatten()
-        ind = np.nonzero(x)
-        d = np.concatenate([d, x[ind]])
-    return d
+        d = np.array([])
+        for k in range(n_ell_bins):
+            l_selection = (l >= bin_edges[k])*(l < bin_edges[k+1])
+            C_hat_k = np.mean(C_hat[:,:,l_selection], axis=-1)
+            x = np.tril(C_hat_k).flatten()
+            ind = np.nonzero(x)
+            d = np.concatenate([d, x[ind]])
+        sims[i,:] = d
+    return sims

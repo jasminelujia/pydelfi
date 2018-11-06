@@ -1,5 +1,6 @@
 from scipy.stats import multivariate_normal
 import numpy as np
+import tqdm
 
 def isnotebook():
     try:
@@ -13,97 +14,6 @@ def isnotebook():
     except NameError:
         return False
 
-# Divide list of jobs between MPI processes
-def allocate_jobs(rank, n_procs, n_jobs):
-    n_j_allocated = 0
-    for i in range(n_procs):
-        n_j_remain = n_jobs - n_j_allocated
-        n_p_remain = n_procs - i
-        n_j_to_allocate = int(n_j_remain / n_p_remain)
-        if rank == i:
-            return range(n_j_allocated, \
-                         n_j_allocated + n_j_to_allocate)
-        n_j_allocated += n_j_to_allocate
-
-# Combine arrays from all processes assuming
-# 1) array was initially zero
-# 2) each process has edited a unique slice of the array
-def complete_array(comm, target_distrib):
-    target = np.zeros(target_distrib.shape, dtype=target_distrib.dtype)
-    comm.Allreduce(target_distrib, target, op=red_op)
-
-    return target
-
-def mean_covariance(simulator, theta_fiducial, nsims, ndata, simulator_args = None, seed_generator = None, use_mpi = True):
-
-    # Set the random seed generator
-    if seed_generator is not None:
-        self.seed_generator = seed_generator
-    else:
-        self.seed_generator = lambda: np.random.randint(2147483647)
-
-    sims = np.zeros((nsims, ndata))
-
-    # Allocate jobs according to MPI
-    inds = allocate_jobs(rank, nsims, n_jobs)
-
-    # Run the simulations
-    for i in range(inds[-1]):
-        seed = seed_generator()
-        sims[i,:] = simulation(theta_fiducial, seed, sim_args)
-
-    # Collect all the sims together from all the processes
-    sims = complete_array(comm, sims)
-
-    # Now compute the covariance and mean
-    C = np.zeros((ndata,ndata))
-    mu = np.zeros((ndata))
-    mu2 = np.zeros((ndata, ndata))
-    for i in range(0, nsims):
-        mu += sims[i,:]/nsims
-        mu2 += np.outer(sims[i,:], sims[i,:])/nsims
-    C = mu2 - np.outer(mu,mu)
-    
-    return mu, C, sims
-
-
-def mean_derivatives(simulator, theta_fiducial, h, nsims = 1, simulator_args = None, seed_generator = None):
-
-    # Set the random seed generator
-    if seed_generator is not None:
-        self.seed_generator = seed_generator
-    else:
-        self.seed_generator = lambda: np.random.randint(2147483647)
-
-    # Initialize dmudt
-    npar = len(theta_fiducial)
-    dmudt = [0]*npar
-    
-    # Run seed matched simulations for derivatives
-    for k in range(nsims):
-        
-        # Set random seed
-        seed = seed_generator()
-        
-        # Fiducial simulation
-        d_fiducial = self.simulation(theta_fiducial, seed, sim_args)
-                
-        # Loop over parameters
-        for i in range(0, npar):
-                
-            # Step theta
-            theta = np.copy(theta_fiducial)
-            theta[i] += h[i]
-                
-            # Shifted simulation with same seed
-            d_dash = self.simulation(theta, seed, simulation_args)
-                
-            # Forward step derivative
-            dmudt[i] += ( (d_dash - d_fiducial)/h[i] )/nsims
-
-    return np.array(dmudt)
-
-
 class Gaussian():
 
     def __init__(self, ndata, theta_fiducial, mu = None, Cinv = None, dmudt = None, dCdt = None, F = None, prior_mean = None, prior_covariance = None, rank=0, n_procs=1, comm=None, red_op=None):
@@ -111,7 +21,7 @@ class Gaussian():
         # Load inputs
         self.theta_fiducial = theta_fiducial
         self.npar = len(theta_fiducial)
-        self.ndata = len(mu)
+        self.ndata = ndata
         self.mu = mu
         self.Cinv = Cinv
         self.dmudt = dmudt
@@ -168,7 +78,7 @@ class Gaussian():
         return target
     
     # Compute the mean and covariance
-    def compute_mean_covariance(self, simulator, nsims, simulator_args = None, seed_generator = None, progress_bar=True):
+    def compute_mean_covariance(self, simulator, nsims, simulator_args = None, seed_generator = None, progress_bar=True, sub_batch=1):
     
         # Set the random seed generator
         if seed_generator is not None:
@@ -176,10 +86,10 @@ class Gaussian():
         else:
             seed_generator = lambda: np.random.randint(2147483647)
 
-        sims = np.zeros((self.nsims, self.ndata))
+        sims = np.zeros((nsims*sub_batch, self.ndata))
 
         # Allocate jobs according to MPI
-        inds = allocate_jobs(nsims)
+        inds = self.allocate_jobs(nsims)
 
         # Run the simulations with MPI
         if progress_bar:
@@ -189,7 +99,7 @@ class Gaussian():
                 pbar = tqdm.tqdm(total = inds[-1], desc = "Covariance simulations")
         for i in range(inds[-1]):
             seed = seed_generator()
-            sims[i,:] = simulator(self.theta_fiducial, seed, simulator_args)
+            sims[i*sub_batch:i*sub_batch+sub_batch,:] = simulator(self.theta_fiducial, seed, simulator_args, sub_batch)
             if progress_bar:
                 pbar.update(1)
 
@@ -199,16 +109,16 @@ class Gaussian():
         # Now compute the covariance and mean
         self.mu = np.zeros((self.ndata))
         mu2 = np.zeros((self.ndata, self.ndata))
-        for i in range(0, nsims):
-            mu += sims[i,:]/nsims
-            mu2 += np.outer(sims[i,:], sims[i,:])/nsims
+        for i in range(0, nsims*sub_batch):
+            mu += sims[i,:]/(nsims*sub_batch)
+            mu2 += np.outer(sims[i,:], sims[i,:])/(nsims*sub_batch)
         self.C = mu2 - np.outer(mu,mu)
 
         # Save the simulations
         self.simulations = sims
-        self.parameters = np.array([self.theta_fiducial for i in range(nsims)])
+        self.parameters = np.array([self.theta_fiducial for i in range(nsims*sub_batch)])
             
-    def compute_derivatives(self, simulator, nsims, h, simulator_args = None, seed_generator = None, progress_bar=True):
+    def compute_derivatives(self, simulator, nsims, h, simulator_args = None, seed_generator = None, progress_bar=True, sub_batch=1):
     
         # Set the random seed generator
         if seed_generator is not None:
@@ -230,8 +140,8 @@ class Gaussian():
             # Set random seed
             seed = seed_generator()
             
-            # Fiducial simulation
-            d_fiducial = simulator(self.theta_fiducial, seed, simulator_args)
+            # Fiducial simulation (mean over batch of outputs)
+            d_fiducial = np.mean(simulator(self.theta_fiducial, seed, simulator_args, sub_batch), axis=0)
             
             # Loop over parameters
             for i in range(0, self.npar):
@@ -241,9 +151,10 @@ class Gaussian():
                 theta[i] += h[i]
                 
                 # Shifted simulation with same seed
-                d_dash = simulator(theta, seed, simulator_args)
-                self.simulations = np.concatenate([self.simulations, d_dash])
-                self.parameters = np.concatenate([self.parameters, theta])
+                sims_dash = simulator(theta, seed, simulator_args, sub_batch)
+                d_dash = np.mean(sims_dash, axis = 0)
+                self.simulations = np.concatenate([self.simulations, sims_dash])
+                self.parameters = np.concatenate([self.parameters, np.array([theta for i in range(sub_batch)])])
 
                 # Forward step derivative
                 self.dmudt[i,:] += ( (d_dash - d_fiducial)/h[i] )/nsims
@@ -341,8 +252,6 @@ class Gaussian():
             t += np.dot(Finv_tt, np.dot(Qinv_tt, self.prior_mean[interesting] - self.theta_fiducial[interesting]))
 
         return t
-
-
 
 
 class Wishart():
