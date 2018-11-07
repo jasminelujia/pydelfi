@@ -141,7 +141,7 @@ class Gaussian():
             seed = seed_generator()
             
             # Fiducial simulation (mean over batch of outputs)
-            d_fiducial = np.mean(simulator(self.theta_fiducial, seed, simulator_args, sub_batch), axis=0)
+            d_fiducial = np.mean(np.atleast_2d(simulator(self.theta_fiducial, seed, simulator_args, sub_batch)), axis=0)
             
             # Loop over parameters
             for i in range(0, self.npar):
@@ -151,7 +151,7 @@ class Gaussian():
                 theta[i] += h[i]
                 
                 # Shifted simulation with same seed
-                sims_dash = simulator(theta, seed, simulator_args, sub_batch)
+                sims_dash = np.atleast_2d(simulator(theta, seed, simulator_args, sub_batch))
                 d_dash = np.mean(sims_dash, axis = 0)
                 self.simulations = np.concatenate([self.simulations, sims_dash])
                 self.parameters = np.concatenate([self.parameters, np.array([theta for i in range(sub_batch)])])

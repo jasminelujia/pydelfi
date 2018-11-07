@@ -64,7 +64,7 @@ class Delfi():
             self.upper = np.ones(self.npar)*np.finfo(np.float32).max
         
         # Asymptotic posterior
-        self.asymptotic_posterior = priors.TruncatedGaussian(self.theta_fiducial, self.Finv, self.lower, self.upper)
+        self.asymptotic_posterior = priors.TruncatedGaussian(self.data, self.Finv, self.lower, self.upper)
 
         # Training data [initialize empty]
         self.ps = np.array([]).reshape(0,self.npar)
@@ -178,7 +178,11 @@ class Delfi():
                 pbar = tqdm.tqdm(total = self.inds_acpt[-1], desc = "Simulations")
         while i_acpt <= self.inds_acpt[-1]:
             try:
-                sims = np.atleast_2d(simulator(ps[i_prop,:], seed_generator(), simulator_args, sub_batch))
+                sims = simulator(ps[i_prop,:], seed_generator(), simulator_args, sub_batch)
+                
+                # Make sure the sims are the right shape
+                if sub_batch == 1 and len(sims) != 1:
+                    sims = np.array([sims])
                 compressed_sims = np.array([compressor(sims[k], compressor_args) for k in range(sub_batch)])
                 if np.all(np.isfinite(compressed_sims.flatten())):
                     data_samples[i_acpt*sub_batch:i_acpt*sub_batch+sub_batch,:] = compressed_sims
