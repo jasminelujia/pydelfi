@@ -244,11 +244,6 @@ x0 = [truncated_gaussian_prior_draw([prior_mean, Finv, lower, upper]) for i in r
 D = 5
 nwalkers = 100
 
-import time
-start = time.time()
-log_likelihood(prior_mean, d, sim_args, prior_args)
-print time.time() - start
-
 # Set up the sampler
 sampler = emcee.EnsembleSampler(nwalkers, D, log_likelihood, args=[d, sim_args, prior_args])
     
@@ -256,6 +251,6 @@ sampler = emcee.EnsembleSampler(nwalkers, D, log_likelihood, args=[d, sim_args, 
 pos, prob, state = sampler.run_mcmc(x0, 100)
 
 # Save the chain
-f = open('emcee_samples.dat'.format(i), 'wb')
+f = open('emcee_samples1.dat', 'wb')
 np.savetxt(f, sampler.flatchain)
 f.close()

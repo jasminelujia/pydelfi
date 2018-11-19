@@ -110,13 +110,16 @@ class Gaussian():
         self.mu = np.zeros((self.ndata))
         mu2 = np.zeros((self.ndata, self.ndata))
         for i in range(0, nsims*sub_batch):
-            mu += sims[i,:]/(nsims*sub_batch)
+            self.mu += sims[i,:]/(nsims*sub_batch)
             mu2 += np.outer(sims[i,:], sims[i,:])/(nsims*sub_batch)
         self.C = mu2 - np.outer(mu,mu)
 
         # Save the simulations
         self.simulations = sims
         self.parameters = np.array([self.theta_fiducial for i in range(nsims*sub_batch)])
+
+        # Invert the covariance
+        self.Cinv = np.linalg.inv(C)
             
     def compute_derivatives(self, simulator, nsims, h, simulator_args = None, seed_generator = None, progress_bar=True, sub_batch=1):
     

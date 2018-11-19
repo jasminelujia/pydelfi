@@ -278,25 +278,22 @@ class Delfi():
             self.sequential_nsims.append(self.n_sims)
             
             # Generate posterior samples
-            print('Sampling approximate posterior...')
-            self.posterior_samples = \
-                self.emcee_sample(self.log_posterior, \
+            if save_intermediate_posteriors:
+                print('Sampling approximate posterior...')
+                self.posterior_samples = self.emcee_sample(self.log_posterior, \
                                   [self.posterior_samples[-i,:] for i in range(self.nwalkers)], \
                                   main_chain=self.posterior_chain_length)
             
-            # Save posterior samples to file
-            if save_intermediate_posteriors:
+                # Save posterior samples to file
                 f = open('{}posterior_samples_0.dat'.format(self.results_dir), 'w')
-            else:
-                f = open('{}posterior_samples.dat'.format(self.results_dir), 'w')
-            np.savetxt(f, self.posterior_samples)
-            f.close()
+                np.savetxt(f, self.posterior_samples)
+                f.close()
             
-            print('Done.')
+                print('Done.')
 
-            # If plot == True, plot the current posterior estimate
-            if plot == True:
-                self.triangle_plot([self.posterior_samples], \
+                # If plot == True, plot the current posterior estimate
+                if plot == True:
+                    self.triangle_plot([self.posterior_samples], \
                                     savefig=True, \
                                     filename='{}seq_train_post_0.pdf'.format(self.results_dir))
 
@@ -354,29 +351,28 @@ class Delfi():
                 self.sequential_nsims.append(self.n_sims)
 
                 # Generate posterior samples
-                print('Sampling approximate posterior...')
-                self.posterior_samples = \
-                    self.emcee_sample(self.log_posterior, \
+                if save_intermediate_posteriors:
+                    print('Sampling approximate posterior...')
+                    self.posterior_samples = self.emcee_sample(self.log_posterior, \
                                       [self.posterior_samples[j] for j in range(self.nwalkers)], \
                                       main_chain=self.posterior_chain_length)
                 
-                # Save posterior samples to file
-                if save_intermediate_posteriors:
+                    # Save posterior samples to file
                     f = open('{}posterior_samples_{:d}.dat'.format(self.results_dir, i+1), 'w')
-                else:
-                    f = open('{}posterior_samples.dat'.format(self.results_dir), 'w')
-                np.savetxt(f, self.posterior_samples)
-                f.close()
+                    np.savetxt(f, self.posterior_samples)
+                    f.close()
 
-                print('Done.')
+                    print('Done.')
 
-                # If plot == True
-                if plot == True:
-                    # Plot the posterior
-                    self.triangle_plot([self.posterior_samples], \
+                    # If plot == True
+                    if plot == True:
+                        # Plot the posterior
+                        self.triangle_plot([self.posterior_samples], \
                                         savefig=True, \
                                         filename='{}seq_train_post_{:d}.pdf'.format(self.results_dir, i + 1))
 
+                # Plot training convergence
+                if plot == True:
                     # Plot the training loss convergence
                     self.sequential_training_plot(savefig=True, filename='{}seq_train_loss.pdf'.format(self.results_dir))
 

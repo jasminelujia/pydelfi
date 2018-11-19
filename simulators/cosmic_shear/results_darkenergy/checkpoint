@@ -1,0 +1,2 @@
+model_checkpoint_path: "mdn_1000_tmp_model"
+all_model_checkpoint_paths: "mdn_1000_tmp_model"

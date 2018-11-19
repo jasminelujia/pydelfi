@@ -1,30 +1,14 @@
 import numpy as np
 import sys
-sys.path.insert(0,'/Users/jalsing/Dropbox (Simons Foundation)/science/modules/lensing/')
-sys.path.insert(0,'/Users/jalsing/Dropbox (Simons Foundation)/science/modules/mcmc/')
-import mcmc
-import tomoFAST
-from hierarchical_functions import *
 import pickle
 import matplotlib.pyplot as plt
 import scipy.optimize as optimize
 import scipy.interpolate as interpolate
-import pyximport; pyximport.install()
-pyximport.install(setup_args={"include_dirs":np.get_include()}, reload_support=True)
-from hierarchical_cython_joint import *
 from scipy.stats import norm
 from scipy.special import jv
 from scipy.stats import wishart
 import time
-import theano
-import theano.tensor as T
-from keras import backend as K
-from keras.models import Sequential
-from keras.layers.core import Layer, Dense, Lambda
 from scipy.stats import norm as normal
-import keras
-import getdist
-from getdist import plots, MCSamples
 from scipy.stats import multivariate_normal
 import emcee
 import pickle
@@ -133,7 +117,7 @@ def power_spectrum(theta, sim_args):
 
     # Perform integration to compute r(z) at specified points according to cosmology
     for i in range(0, len(zvalues)):
-        rvalues[i] = integrate.romberg(lambda x: 1.0/np.sqrt(omm*(1+x)**3 + omnu*(1+x)**4+omk*(1+x)**2 + omde*np.exp(-3*wa*x/(1+x))*(1+x)**(3*(1+w0+wa))), 0, zvalues[i])
+        rvalues[i] = integrate.romberg(lambda x: 1.0/np.sqrt(omm*(1+x)**3 + omnu*(1+x)**4+omk*(1+x)**2 + omde*np.exp(-3*wa*x/(1+x))*(1+x)**(3*(1+w0+wa))), 0, zvalues[i], divmax=100)
 
     # Generate interpolation functions to give r(z) and z(r) given cosmology
     r = interpolate.InterpolatedUnivariateSpline(zvalues, rvalues, k = 3)
@@ -222,13 +206,6 @@ def log_likelihood(theta, d, sim_args, prior_args):
 
 # n(z)
 pz_fid = pickle.load(open('pz_euclid.pkl', 'rb'))
-nz = 10
-PZ = [0]*nz
-for i in range(nz):
-    z = np.concatenate([np.linspace(-0.5, 0, 100), pz_fid[i].get_knots()[1:]])
-    p = np.concatenate([np.zeros(100), pz_fid[i](pz_fid[i].get_knots()[1:])])
-    PZ[i] = interpolate.InterpolatedUnivariateSpline(z, p, k = 3)
-pz_fid = PZ
 
 # Set up fiducial parameters and binning
 theta_fiducial = np.array([0.3, 0.8, 0.05, 0.70, 0.96, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])
@@ -239,13 +216,13 @@ npar = 15
 lower = np.zeros(npar)
 upper = np.zeros(npar)
 lower[0:5] = np.array([0, 0.4, 0, 0.4, 0.7])
-lower[5:] = np.ones(nz)*-0.5
+lower[5:] = np.ones(nz)*-0.1
 upper[0:5] = np.array([1, 1.2, 0.1, 1.0, 1.3])
-upper[5:] = np.ones(nz)*0.5
+upper[5:] = np.ones(nz)*0.1
 prior_mean = theta_fiducial
 sigmas = np.zeros(npar)
 sigmas[0:5] = np.array([0.1, 0.1, 0.05, 0.3, 0.3])
-sigmas[5:] = np.ones(nz)*0.1
+sigmas[5:] = np.ones(nz)*0.05
 Q = np.eye(npar)*sigmas**2
 Qinv = np.linalg.inv(Q)
 prior_args = [prior_mean, Q, lower, upper]
@@ -285,18 +262,18 @@ nwalkers = 200
 sampler = emcee.EnsembleSampler(nwalkers, D, log_likelihood, args=[d, sim_args, prior_args])
     
 # Burn-in chain
-pos, prob, state = sampler.run_mcmc(x0, 200)
+pos, prob, state = sampler.run_mcmc(x0, 100)
 
 # Save the chain
-f = open('emcee_samples_systematics.dat', 'wb')
+f = open('emcee_samples_systematics0.dat', 'wb')
 np.savetxt(f, sampler.flatchain)
 f.close()
 
 for i in range(10):
     # Main chain
-    pos, prob, state = sampler.run_mcmc(pos, 200)
+    pos, prob, state = sampler.run_mcmc(pos, 100)
 
     # Save the chain
-    f = open('emcee_samples_systematics.dat', 'wb')
+    f = open('emcee_samples_systematics{}.dat'.format(i+1), 'wb')
     np.savetxt(f, sampler.flatchain)
     f.close()
