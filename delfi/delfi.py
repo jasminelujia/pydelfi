@@ -29,6 +29,16 @@ class Delfi():
                  rank=0, n_procs=1, comm=None, red_op=None, \
                  show_plot=True, results_dir = "", progress_bar=True):
         
+        # MPI-specific setup
+        self.rank = rank
+        self.n_procs = n_procs
+        if n_procs > 1:
+            self.use_mpi = True
+            self.comm = comm
+            self.red_op = red_op
+        else:
+            self.use_mpi = False
+
         # Data
         self.data = data
         self.D = len(data)
@@ -40,8 +50,9 @@ class Delfi():
         self.npar = len(theta_fiducial)
     
         # Initialize the NDE and trainer
-        self.nde = nde
-        self.trainer = ndes.train.ConditionalTrainer(nde)
+        if rank == 0:
+            self.nde = nde
+            self.trainer = ndes.train.ConditionalTrainer(nde)
 
         # Tensorflow session for the NDE training
         self.sess = tf.Session(config = tf.ConfigProto())
@@ -98,15 +109,7 @@ class Delfi():
         self.sequential_validation_loss = []
         self.sequential_nsims = []
 
-        # MPI-specific setup
-        self.rank = rank
-        self.n_procs = n_procs
-        if n_procs > 1:
-            self.use_mpi = True
-            self.comm = comm
-            self.red_op = red_op
-        else:
-            self.use_mpi = False
+
 
         # Are we in a jupyter notebook or not?
         self.nb = isnotebook()

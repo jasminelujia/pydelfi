@@ -119,7 +119,8 @@ class ConditionalTrainer():
             else:
                 early_stopping_count += 1
             if early_stopping_count >= patience:
-                pbar.set_postfix(str="Early stopping: terminated", refresh=True)
+                if progress_bar:
+                    pbar.set_postfix(str="Early stopping: terminated", refresh=True)
                 break
 
         # Restore best model
