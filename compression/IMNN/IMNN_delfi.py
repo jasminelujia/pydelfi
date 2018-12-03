@@ -1,5 +1,5 @@
 import sys
-sys.path.insert(0, 'compression/IMNN')
+sys.path.insert(0, 'compression/IMNN/IMNN')
 
 import numpy as np
 import IMNN
