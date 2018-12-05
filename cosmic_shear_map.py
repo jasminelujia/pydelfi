@@ -121,11 +121,11 @@ DelfiMDN.fisher_pretraining()
 
 # Load the simulations that have been ran for the compression function into Delfi
 
-## Compress the simulations
-#compressed_sims = np.array([Compressor.scoreMLE(Compressor.simulations[i,:], compressor_args) for i in range(len(Compressor.simulations))])
+# Compress the simulations
+compressed_sims = np.array([compressor(Compressor.simulations[i,:], compressor_args) for i in range(len(Compressor.simulations))])
 
 ## Load them in to the Delfi object
-#DelfiMDN.load_simulations(compressed_simulations, Compressor.parameters)
+DelfiMDN.load_simulations(compressed_sims, Compressor.parameters)
 
 # Initial samples, batch size for population samples, number of populations
 n_initial = 280
@@ -133,4 +133,4 @@ n_batch = 280
 n_populations = 23
 
 # Do the SNL training
-DelfiMDN.sequential_training(simulator, compressor, n_initial, n_batch, n_populations, patience=10)
+DelfiMDN.sequential_training(simulator, compressor, n_initial, n_batch, n_populations, patience=10, simulation_args = simulation_args, compressor_args = compressor_args)
