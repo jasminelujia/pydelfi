@@ -112,14 +112,12 @@ class Gaussian():
         for i in range(0, nsims*sub_batch):
             self.mu += sims[i,:]/(nsims*sub_batch)
             mu2 += np.outer(sims[i,:], sims[i,:])/(nsims*sub_batch)
-        self.C = mu2 - np.outer(mu,mu)
+        self.C = mu2 - np.outer(self.mu,self.mu)
+        self.Cinv = np.linalg.inv(self.C)
 
         # Save the simulations
         self.simulations = sims
         self.parameters = np.array([self.theta_fiducial for i in range(nsims*sub_batch)])
-
-        # Invert the covariance
-        self.Cinv = np.linalg.inv(C)
             
     def compute_derivatives(self, simulator, nsims, h, simulator_args = None, seed_generator = None, progress_bar=True, sub_batch=1):
     
@@ -129,16 +127,22 @@ class Gaussian():
         else:
             seed_generator = lambda: np.random.randint(2147483647)
 
+        sims_dash = np.zeros((nsims*sub_batch, self.ndata))
+        theta = np.zeros((nsims*sub_batch, self.npar))
+
+        # Allocate jobs according to MPI
+        inds = self.allocate_jobs(nsims)
+
         # Initialize the derivatives
-        self.dmudt = np.zeros((self.npar, self.ndata))
+        dmudt = np.zeros((nsims, self.npar, self.ndata))
 
         # Run seed matched simulations for derivatives
         if progress_bar:
             if self.nb:
-                pbar = tqdm.tqdm_notebook(total = nsims*self.npar, desc = "Derivative simulations")
+                pbar = tqdm.tqdm_notebook(total = inds[-1]*self.npar, desc = "Derivative simulations")
             else:
-                pbar = tqdm.tqdm(total = nsims*self.npar, desc = "Derivative simulations")
-        for k in range(nsims):
+                pbar = tqdm.tqdm(total = inds[-1]*self.npar, desc = "Derivative simulations")
+        for k in range(inds[-1]):
             
             # Set random seed
             seed = seed_generator()
@@ -150,21 +154,24 @@ class Gaussian():
             for i in range(0, self.npar):
                 
                 # Step theta
-                theta = np.copy(self.theta_fiducial)
-                theta[i] += h[i]
+                theta[k*sub_batch:(k+1)*sub_batch, :] = np.copy(self.theta_fiducial)
+                theta[k*sub_batch:(k+1)*sub_batch, i] += h[i]
                 
                 # Shifted simulation with same seed
-                sims_dash = np.atleast_2d(simulator(theta, seed, simulator_args, sub_batch))
-                d_dash = np.mean(sims_dash, axis = 0)
-                self.simulations = np.concatenate([self.simulations, sims_dash])
-                self.parameters = np.concatenate([self.parameters, np.array([theta for i in range(sub_batch)])])
+                sims_dash[k*sub_batch:(k+1)*sub_batch, :] = np.atleast_2d(simulator(theta[k], seed, simulator_args, sub_batch))
+                d_dash = np.mean(sims_dash[k*sub_batch:(k+1)*sub_batch, :], axis = 0)
 
                 # Forward step derivative
-                self.dmudt[i,:] += ( (d_dash - d_fiducial)/h[i] )/nsims
+                dmudt[k, i, :] = (d_dash - d_fiducial)/h[i]
 
                 if progress_bar:
                     pbar.update(1)
-        
+
+        sims_dash = self.complete_array(sims_dash)
+        dmudt = self.complete_array(dmudt)
+        self.dmudt = np.mean(dmudt, axis = 0)
+        self.simulations = np.concatenate([self.simulations, sims_dash])
+        self.parameters = np.concatenate([self.parameters, theta])
 
     # Fisher score maximum likelihood estimator
     def scoreMLE(self, d):
