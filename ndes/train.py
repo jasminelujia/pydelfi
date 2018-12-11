@@ -44,7 +44,7 @@ class ConditionalTrainer():
     Training class for the conditional MADEs/MAFs classes using a tensorflow optimizer.
     """           
     def train(self, sess, train_data, validation_split = 0.1, epochs=1000, batch_size=100,
-              patience=20, saver_name='tmp_model', progress_bar=True):
+              patience=20, saver_name='tmp_model', progress_bar=True, save_during_early_stopping = True):
         """
         Training function to be called with desired parameters within a tensorflow session.
         :param sess: tensorflow session where the graph is run.
@@ -114,7 +114,8 @@ class ConditionalTrainer():
                 
             if this_loss < bst_loss:
                 bst_loss = this_loss
-                saver.save(sess,"./"+saver_name)
+                if save_during_early_stopping:
+                    saver.save(sess,"./"+saver_name)
                 early_stopping_count = 0
             else:
                 early_stopping_count += 1
@@ -124,7 +125,10 @@ class ConditionalTrainer():
                 break
 
         # Restore best model
-        saver.restore(sess,"./"+saver_name)
+        if save_during_early_stopping:
+            saver.restore(sess,"./"+saver_name)
+        else:
+            saver.save(sess, "./"+saver_name)
 
         return np.array(validation_losses), np.array(training_losses)
 
