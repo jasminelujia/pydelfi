@@ -28,17 +28,7 @@ class ConditionalTrainer():
         
         self.model = model
         self.nb = isnotebook()
-        
-        # If the model has batch norm and it is activated, update operations on moving
-        # mean and moving average have to be added to the training operation
-        if hasattr(self.model,'batch_norm') and self.model.batch_norm is True:
-            self.has_batch_norm = True
-            update_ops = tf.get_collection(tf.GraphKeys.UPDATE_OPS)
-            with tf.control_dependencies(update_ops):
-                self.train_op = optimizer(**optimizer_arguments).minimize(self.model.trn_loss)
-        else:
-            self.has_batch_norm = False
-            self.train_op = optimizer(**optimizer_arguments).minimize(self.model.trn_loss)
+        self.train_op = optimizer(**optimizer_arguments).minimize(self.model.trn_loss)
 
     """
     Training class for the conditional MADEs/MAFs classes using a tensorflow optimizer.
@@ -93,37 +83,34 @@ class ConditionalTrainer():
             for batch in range(len(train_idx)//batch_size):
                 # Last batch will have maximum number of elements possible
                 batch_idx = train_idx[batch*batch_size:np.min([(batch+1)*batch_size,len(train_idx)])]
-                if self.has_batch_norm:
-                    sess.run(self.train_op,feed_dict={self.model.input:train_data_X[batch_idx],
-                                                      self.model.y:train_data_Y[batch_idx],
-                                                      self.model.training:True})
-                else:
-                    sess.run(self.train_op,feed_dict={self.model.input:train_data_X[batch_idx],
+
+                sess.run(self.train_op,feed_dict={self.model.input:train_data_X[batch_idx],
                                                       self.model.y:train_data_Y[batch_idx]})
             # Early stopping check
-            this_loss = sess.run(self.model.trn_loss,feed_dict={self.model.input:val_data_X,
+            val_loss = sess.run(self.model.trn_loss,feed_dict={self.model.input:val_data_X,
                                                                     self.model.y:val_data_Y})
             train_loss = sess.run(self.model.trn_loss,feed_dict={self.model.input:train_data_X,
                                                                          self.model.y:train_data_Y})
             if progress_bar:
                 pbar.update()
-                pbar.set_postfix(ordered_dict={"train loss":train_loss, "val loss":this_loss}, refresh=True)
-                #print("Epoch {:05d}, Train_loss: {:05.4f}, Val_loss: {:05.4f}".format(epoch,train_loss,this_loss))
-            validation_losses.append(this_loss)
+                pbar.set_postfix(ordered_dict={"train loss":train_loss, "val loss":val_loss}, refresh=True)
+            validation_losses.append(val_loss)
             training_losses.append(train_loss)
                 
-            if this_loss < bst_loss:
-                bst_loss = this_loss
-                saver.save(sess,"./"+saver_name)
+            if val_loss < bst_loss:
+                bst_loss = val_loss
+                if saver_name is not None:
+                    saver.save(sess,"./"+saver_name)
                 early_stopping_count = 0
             else:
                 early_stopping_count += 1
             if early_stopping_count >= patience:
-                pbar.set_postfix(str="Early stopping: terminated", refresh=True)
+                #pbar.set_postfix(str="Early stopping: terminated", refresh=True)
                 break
 
         # Restore best model
-        saver.restore(sess,"./"+saver_name)
+        if saver_name is not None:
+            saver.restore(sess,"./"+saver_name)
 
         return np.array(validation_losses), np.array(training_losses)
 

@@ -7,18 +7,21 @@ class TruncatedGaussian():
 
         self.mean = mean
         self.C = C
+        self.Cinv = np.linalg.inv(C)
         self.lower = lower
         self.upper = upper
         self.L = np.linalg.cholesky(C)
+        self.logdet = np.log(np.linalg.det(C))
         
-    def uniform(self, x):
+    def loguniform(self, x):
 
-        # Test each parameter against prior limits
-        for a in range(0, len(x)):
+        inrange = np.prod(x > self.lower)*np.prod(x < self.upper)
+        return inrange*np.log(np.prod(self.upper-self.lower)) - (1 - inrange)*1e300
     
-            if x[a] > self.upper[a] or x[a] < self.lower[a]:
-                return 0
-        return np.prod(self.upper-self.lower)
+    def uniform(self, x):
+    
+        inrange = np.prod(x > self.lower)*np.prod(x < self.upper)
+        return inrange*np.prod(self.upper-self.lower)
 
     def draw(self):
 
@@ -30,4 +33,30 @@ class TruncatedGaussian():
 
     def pdf(self, x):
 
-        return self.uniform(x)*multivariate_normal.pdf(x, mean=self.mean, cov=self.C)
+        return np.exp(self.logpdf(x))
+
+    def logpdf(self, x):
+        
+        return self.loguniform(x) - 0.5*self.logdet - 0.5*np.dot((x - self.mean), np.dot(self.Cinv,(x - self.mean)) )
+
+
+class Uniform():
+
+    def __init__(self, lower, upper):
+
+        self.lower = lower
+        self.upper = upper
+
+    def logpdf(self, x):
+
+        inrange = np.prod(x > self.lower)*np.prod(x < self.upper)
+        return inrange*np.log(np.prod(self.upper-self.lower)) - (1 - inrange)*np.inf
+    
+    def pdf(self, x):
+        
+        inrange = np.prod(x > self.lower)*np.prod(x < self.upper)
+        return inrange*np.prod(self.upper-self.lower)
+
+    def draw(self):
+
+        return np.random.uniform(self.lower, self.upper)

@@ -5,26 +5,13 @@ import ndes.mades
 
 dtype = tf.float32
 
-class BatchNormalizationExt(tf.layers.BatchNormalization):
-    def eval_inv(self, sess, y):
-        """
-        Evaluates the inverse batch norm transformation for output y.
-        :param y: output as numpy array
-        :return: input as numpy array
-        """
-        gamma,beta,moving_mean,moving_variance = sess.run(self.variables)
-        x_hat = (y - beta) / gamma
-        x = np.sqrt(moving_variance) * x_hat + moving_mean
-
-        return x
-
 class ConditionalMaskedAutoregressiveFlow:
     """
     Implements a Conditional Masked Autoregressive Flow.
     """
 
-    def __init__(self, n_inputs, n_outputs, n_hiddens, act_fun, n_mades, batch_norm=False, momentum=0.2,
-                 output_order='sequential', mode='sequential', input=None, output=None, logpdf=None):
+    def __init__(self, n_inputs, n_outputs, n_hiddens, act_fun, n_mades,
+                 output_order='sequential', mode='sequential', input=None, output=None, logpdf=None, index=1):
         """
         Constructor.
         :param n_inputs: number of (conditional) inputs
@@ -32,8 +19,6 @@ class ConditionalMaskedAutoregressiveFlow:
         :param n_hiddens: list with number of hidden units for each hidden layer
         :param act_fun: tensorflow activation function
         :param n_mades: number of mades in the flow
-        :param batch_norm: whether to use batch normalization between mades in the flow
-        :param momentum: momentum for moving mean and variance of the batch normalization layers
         :param output_order: order of outputs of last made
         :param mode: strategy for assigning degrees to hidden nodes: can be 'random' or 'sequential'
         :param input: tensorflow placeholder to serve as input; if None, a new placeholder is created
@@ -46,14 +31,11 @@ class ConditionalMaskedAutoregressiveFlow:
         self.n_hiddens = n_hiddens
         self.act_fun = act_fun
         self.n_mades = n_mades
-        self.batch_norm = batch_norm
-        self.momentum = momentum
         self.mode = mode
 
         self.input = tf.placeholder(dtype=dtype,shape=[None,n_inputs],name='x') if input is None else input
         self.y = tf.placeholder(dtype=dtype,shape=[None,n_outputs],name='y') if output is None else output
         self.logpdf = tf.placeholder(dtype=dtype,shape=[None],name='logpdf') if logpdf is None else logpdf
-        self.training = tf.placeholder_with_default(False,shape=(),name="training")
         self.parms = []
 
         self.mades = []
@@ -62,9 +44,10 @@ class ConditionalMaskedAutoregressiveFlow:
         self.logdet_dudy = 0.0
 
         for i in range(n_mades):
-
+            
             # create a new made
-            made = ndes.mades.ConditionalGaussianMade(n_inputs, n_outputs, n_hiddens, act_fun,
+            with tf.variable_scope('nde_' + str(index) + '_made_' + str(i + 1)):
+                made = ndes.mades.ConditionalGaussianMade(n_inputs, n_outputs, n_hiddens, act_fun,
                                                  output_order, mode, self.input, self.u)
             self.mades.append(made)
             self.parms += made.parms
@@ -74,16 +57,6 @@ class ConditionalMaskedAutoregressiveFlow:
             self.u = made.u
             self.logdet_dudy += 0.5 * tf.reduce_sum(made.logp, axis=1,keepdims=True)
 
-            # batch normalization
-            if batch_norm:
-                bn = BatchNormalizationExt(momentum=self.momentum)
-                v_tmp = tf.nn.moments(self.u,[0])[1]
-                self.u = bn.apply(self.u,training=self.training)
-                self.parms += [bn.gamma,bn.beta]
-                v_tmp = tf.cond(self.training,lambda:v_tmp,lambda:bn.moving_variance)
-                self.logdet_dudy += tf.reduce_sum(tf.log(bn.gamma)) - 0.5 * tf.reduce_sum(tf.log(v_tmp+1e-5))
-                self.bns.append(bn)
-
         self.output_order = self.mades[0].output_order
 
         # log likelihoods
@@ -91,7 +64,7 @@ class ConditionalMaskedAutoregressiveFlow:
 
         # train objective
         self.trn_loss = -tf.reduce_mean(self.L,name='trn_loss')
-        self.trn_loss_reg = tf.abs(tf.reduce_mean(tf.subtract(self.L, self.logpdf)), name = "trn_loss_reg")
+        #self.trn_loss_reg = tf.abs(tf.reduce_mean(tf.subtract(self.L, self.logpdf)), name = "trn_loss_reg")
 
     def eval(self, xy, sess, log=True):
         """
@@ -142,14 +115,13 @@ class ConditionalMaskedAutoregressiveFlow:
         x, y = xy
         return sess.run(self.u,feed_dict={self.input:x,self.y:y})
 
-
 class MixtureDensityNetwork:
     """
     Implements a Mixture Density Network for modeling p(y|x)
     """
 
     def __init__(self, n_inputs, n_outputs, n_components = 3, n_hidden=[50,50], activations=[tf.tanh, tf.tanh],
-                 input=None, output=None, logpdf=None, batch_norm=False):
+                 input=None, output=None, logpdf=None, index=1):
         """
         Constructor.
         :param n_inputs: number of (conditional) inputs
@@ -167,19 +139,17 @@ class MixtureDensityNetwork:
         self.N = int((self.D + self.D * (self.D + 1) / 2 + 1)*self.M)
         self.n_hidden = n_hidden
         self.activations = activations
-        self.batch_norm = batch_norm
         
         self.input = tf.placeholder(dtype=dtype,shape=[None,self.P],name='x') if input is None else input
         self.y = tf.placeholder(dtype=dtype,shape=[None,self.D],name='y') if output is None else output
         self.logpdf = tf.placeholder(dtype=dtype,shape=[None],name='logpdf') if logpdf is None else logpdf
-        self.training = tf.placeholder_with_default(False,shape=(),name="training")
         
         # Build the layers of the network
         self.layers = [self.input]
         self.weights = []
         self.biases = []
         for i in range(len(self.n_hidden)):
-            with tf.variable_scope('layer_' + str(i + 1)):
+            with tf.variable_scope('nde_' + str(index) + '_layer_' + str(i + 1)):
                 if i == 0:
                     self.weights.append(tf.get_variable("weights", [self.P, self.n_hidden[i]], initializer = tf.random_normal_initializer(0., np.sqrt(2./self.P))))
                     self.biases.append(tf.get_variable("biases", [self.n_hidden[i]], initializer = tf.constant_initializer(0.0)))
@@ -195,7 +165,14 @@ class MixtureDensityNetwork:
                 self.layers.append(tf.add(tf.matmul(self.layers[-1], self.weights[-1]), self.biases[-1]))
 
         # Map the output layer to mixture model parameters
-        self.μ, self.Σ, self.α, self.det = self.mapping(self.layers[-1])
+        self.μ, self.σ, self.α = tf.split(self.layers[-1], [self.M * self.D, self.M * self.D * (self.D + 1) // 2, self.M], 1)
+        self.μ = tf.reshape(self.μ, (-1, self.M, self.D))
+        self.σ = tf.reshape(self.σ, (-1, self.M, self.D * (self.D + 1) // 2))
+        self.α = tf.nn.softmax(self.α)
+        self.Σ = tf.contrib.distributions.fill_triangular(self.σ)
+        self.Σ = self.Σ - tf.linalg.diag(tf.linalg.diag_part(self.Σ)) + tf.linalg.diag(tf.exp(tf.linalg.diag_part(self.Σ)))
+        self.det = tf.reduce_prod(tf.linalg.diag_part(self.Σ), axis=-1)
+
         self.μ = tf.identity(self.μ, name = "mu")
         self.Σ = tf.identity(self.Σ, name = "Sigma")
         self.α = tf.identity(self.α, name = "alpha")
@@ -206,36 +183,7 @@ class MixtureDensityNetwork:
 
         # Objective loss function
         self.trn_loss = -tf.reduce_mean(self.L, name = "trn_loss")
-        self.trn_loss_reg = -tf.reduce_mean(tf.subtract(self.L, self.logpdf), name = "trn_loss_reg")
-        
-
-    # Build lower triangular from network output (also calculate determinant)
-    def lower_triangular_matrix(self, σ):
-        Σ = []
-        det = []
-        start = 0
-        end = 1
-        for i in range(self.D):
-            exp_val = tf.exp(σ[:, :, end-1])
-            det.append(exp_val)
-            if i > 0:
-                Σ.append(tf.pad(tf.concat([σ[:, :, start:end-1], tf.expand_dims(exp_val, -1)], -1), [[0, 0], [0, 0], [0, self.D-i-1]]))
-            else:
-                Σ.append(tf.pad(tf.expand_dims(exp_val, -1), [[0, 0], [0, 0], [0, self.D-i-1]]))
-            start = end
-            end += i + 2
-        Σ = tf.transpose(tf.stack(Σ), (1, 2, 0, 3))
-        det = tf.reduce_prod(tf.stack(det), 0)
-        return Σ, det
-
-    # Split network output into means, covariances and weights (also returns determinant of covariance)
-    def mapping(self, output_layer):
-        μ, Σ, α = tf.split(output_layer, [self.M * self.D, self.M * self.D * (self.D + 1) // 2, self.M], 1)
-        μ = tf.reshape(μ, (-1, self.M, self.D))
-        Σ, det = self.lower_triangular_matrix(tf.reshape(Σ, (-1, self.M, self.D * (self.D + 1) // 2)))
-        α = tf.nn.softmax(α)
-        return μ, Σ, α, det
-
+        #self.trn_loss_reg = -tf.reduce_mean(tf.subtract(self.L, self.logpdf), name = "trn_loss_reg")
 
     def eval(self, xy, sess, log=True):
         """
@@ -250,4 +198,6 @@ class MixtureDensityNetwork:
         lprob = sess.run(self.L,feed_dict={self.input:x,self.y:y})
 
         return lprob if log else np.exp(lprob)
+
+
 
