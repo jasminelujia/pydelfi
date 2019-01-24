@@ -76,7 +76,7 @@ class ConditionalMaskedAutoregressiveFlow:
         """
         
         x, y = xy
-        lprob = sess.run(self.L,feed_dict={self.input:x,self.y:y})
+        lprob = sess.run(self.L,feed_dict={self.input:x,self.y:y})[0]
 
         return lprob if log else np.exp(lprob)
 
@@ -133,6 +133,7 @@ class MixtureDensityNetwork:
         """
         
         # save input arguments
+        self.n_inputs = n_inputs
         self.D = n_outputs
         self.P = n_inputs
         self.M = n_components
