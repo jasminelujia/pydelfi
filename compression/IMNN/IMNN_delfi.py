@@ -1,5 +1,5 @@
 import sys
-sys.path.insert(0, 'compression/IMNN/information_maximizer')
+sys.path.insert(0, 'compression/IMNN/information_maximiser')
 
 import numpy as np
 import IMNN

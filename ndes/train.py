@@ -84,13 +84,13 @@ class ConditionalTrainer():
                 # Last batch will have maximum number of elements possible
                 batch_idx = train_idx[batch*batch_size:np.min([(batch+1)*batch_size,len(train_idx)])]
 
-                sess.run(self.train_op,feed_dict={self.model.input:train_data_X[batch_idx],
-                                                      self.model.y:train_data_Y[batch_idx]})
+                sess.run(self.train_op,feed_dict={self.model.parameters:train_data_X[batch_idx],
+                                                      self.model.data:train_data_Y[batch_idx]})
             # Early stopping check
-            val_loss = sess.run(self.model.trn_loss,feed_dict={self.model.input:val_data_X,
-                                                                    self.model.y:val_data_Y})
-            train_loss = sess.run(self.model.trn_loss,feed_dict={self.model.input:train_data_X,
-                                                                         self.model.y:train_data_Y})
+            val_loss = sess.run(self.model.trn_loss,feed_dict={self.model.parameters:val_data_X,
+                                                                    self.model.data:val_data_Y})
+            train_loss = sess.run(self.model.trn_loss,feed_dict={self.model.parameters:train_data_X,
+                                                                         self.model.data:train_data_Y})
             if progress_bar:
                 pbar.update()
                 pbar.set_postfix(ordered_dict={"train loss":train_loss, "val loss":val_loss}, refresh=True)

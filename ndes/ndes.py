@@ -10,12 +10,12 @@ class ConditionalMaskedAutoregressiveFlow:
     Implements a Conditional Masked Autoregressive Flow.
     """
 
-    def __init__(self, n_inputs, n_outputs, n_hiddens, act_fun, n_mades,
-                 output_order='sequential', mode='sequential', input=None, output=None, logpdf=None, index=1):
+    def __init__(self, n_parameters, n_data, n_hiddens, act_fun, n_mades,
+                 output_order='sequential', mode='sequential', input_parameters=None, input_data=None, logpdf=None, index=1):
         """
         Constructor.
-        :param n_inputs: number of (conditional) inputs
-        :param n_outputs: number of outputs
+        :param n_parameters: number of (conditional) inputs
+        :param n_data: number of outputs
         :param n_hiddens: list with number of hidden units for each hidden layer
         :param act_fun: tensorflow activation function
         :param n_mades: number of mades in the flow
@@ -26,29 +26,29 @@ class ConditionalMaskedAutoregressiveFlow:
         """
 
         # save input arguments
-        self.n_inputs = n_inputs
-        self.n_outputs = n_outputs
+        self.n_parameters = n_parameters
+        self.n_data = n_data
         self.n_hiddens = n_hiddens
         self.act_fun = act_fun
         self.n_mades = n_mades
         self.mode = mode
 
-        self.input = tf.placeholder(dtype=dtype,shape=[None,n_inputs],name='x') if input is None else input
-        self.y = tf.placeholder(dtype=dtype,shape=[None,n_outputs],name='y') if output is None else output
+        self.parameters = tf.placeholder(dtype=dtype,shape=[None,n_parameters],name='parameters') if input_parameters is None else input_parameters
+        self.data = tf.placeholder(dtype=dtype,shape=[None,n_data],name='data') if input_data is None else input_data
         self.logpdf = tf.placeholder(dtype=dtype,shape=[None],name='logpdf') if logpdf is None else logpdf
         self.parms = []
 
         self.mades = []
         self.bns = []
-        self.u = self.y
+        self.u = self.data
         self.logdet_dudy = 0.0
 
         for i in range(n_mades):
             
             # create a new made
             with tf.variable_scope('nde_' + str(index) + '_made_' + str(i + 1)):
-                made = ndes.mades.ConditionalGaussianMade(n_inputs, n_outputs, n_hiddens, act_fun,
-                                                 output_order, mode, self.input, self.u)
+                made = ndes.mades.ConditionalGaussianMade(n_parameters, n_data, n_hiddens, act_fun,
+                                                 output_order, mode, self.parameters, self.u)
             self.mades.append(made)
             self.parms += made.parms
             output_order = output_order if output_order is 'random' else made.output_order[::-1]
@@ -60,11 +60,10 @@ class ConditionalMaskedAutoregressiveFlow:
         self.output_order = self.mades[0].output_order
 
         # log likelihoods
-        self.L = tf.add(-0.5 * n_outputs * np.log(2 * np.pi) - 0.5 * tf.reduce_sum(self.u ** 2, axis=1,keepdims=True), self.logdet_dudy,name='L')
+        self.L = tf.add(-0.5 * n_data * np.log(2 * np.pi) - 0.5 * tf.reduce_sum(self.u ** 2, axis=1,keepdims=True), self.logdet_dudy,name='L')
 
         # train objective
         self.trn_loss = -tf.reduce_mean(self.L,name='trn_loss')
-        #self.trn_loss_reg = tf.abs(tf.reduce_mean(tf.subtract(self.L, self.logpdf)), name = "trn_loss_reg")
 
     def eval(self, xy, sess, log=True):
         """
@@ -76,7 +75,7 @@ class ConditionalMaskedAutoregressiveFlow:
         """
         
         x, y = xy
-        lprob = sess.run(self.L,feed_dict={self.input:x,self.y:y})[0]
+        lprob = sess.run(self.L,feed_dict={self.parameters:x,self.data:y})[0]
 
         return lprob if log else np.exp(lprob)
 
@@ -90,7 +89,7 @@ class ConditionalMaskedAutoregressiveFlow:
         :return: samples
         """
 
-        y = rng.randn(n_samples, self.n_outputs).astype(dtype) if u is None else u
+        y = rng.randn(n_samples, self.n_data).astype(dtype) if u is None else u
 
         if getattr(self, 'batch_norm', False):
 
@@ -113,19 +112,20 @@ class ConditionalMaskedAutoregressiveFlow:
         """
 
         x, y = xy
-        return sess.run(self.u,feed_dict={self.input:x,self.y:y})
+        return sess.run(self.u,feed_dict={self.parameters:x,self.data:y})
+
 
 class MixtureDensityNetwork:
     """
     Implements a Mixture Density Network for modeling p(y|x)
     """
 
-    def __init__(self, n_inputs, n_outputs, n_components = 3, n_hidden=[50,50], activations=[tf.tanh, tf.tanh],
-                 input=None, output=None, logpdf=None, index=1):
+    def __init__(self, n_parameters, n_data, n_components = 3, n_hidden=[50,50], activations=[tf.tanh, tf.tanh],
+                 input_parameters=None, input_data=None, logpdf=None, index=1):
         """
         Constructor.
-        :param n_inputs: number of (conditional) inputs
-        :param n_outputs: number of outputs (ie dimensionality of distribution you're parameterizing)
+        :param n_parameters: number of (conditional) inputs
+        :param n_data: number of outputs (ie dimensionality of distribution you're parameterizing)
         :param n_hiddens: list with number of hidden units for each hidden layer
         :param activations: tensorflow activation functions for each hidden layer
         :param input: tensorflow placeholder to serve as input; if None, a new placeholder is created
@@ -133,26 +133,25 @@ class MixtureDensityNetwork:
         """
         
         # save input arguments
-        self.n_inputs = n_inputs
-        self.D = n_outputs
-        self.P = n_inputs
+        self.n_parameters = n_parameters
+        self.n_data = n_data
         self.M = n_components
-        self.N = int((self.D + self.D * (self.D + 1) / 2 + 1)*self.M)
+        self.N = int((self.n_data + self.n_data * (self.n_data + 1) / 2 + 1)*self.M)
         self.n_hidden = n_hidden
         self.activations = activations
         
-        self.input = tf.placeholder(dtype=dtype,shape=[None,self.P],name='x') if input is None else input
-        self.y = tf.placeholder(dtype=dtype,shape=[None,self.D],name='y') if output is None else output
+        self.parameters = tf.placeholder(dtype=dtype,shape=[None,self.n_parameters],name='parameters') if input_parameters is None else input_parameters
+        self.data = tf.placeholder(dtype=dtype,shape=[None,self.n_data],name='data') if input_data is None else input_data
         self.logpdf = tf.placeholder(dtype=dtype,shape=[None],name='logpdf') if logpdf is None else logpdf
         
         # Build the layers of the network
-        self.layers = [self.input]
+        self.layers = [self.parameters]
         self.weights = []
         self.biases = []
         for i in range(len(self.n_hidden)):
             with tf.variable_scope('nde_' + str(index) + '_layer_' + str(i + 1)):
                 if i == 0:
-                    self.weights.append(tf.get_variable("weights", [self.P, self.n_hidden[i]], initializer = tf.random_normal_initializer(0., np.sqrt(2./self.P))))
+                    self.weights.append(tf.get_variable("weights", [self.n_parameters, self.n_hidden[i]], initializer = tf.random_normal_initializer(0., np.sqrt(2./self.n_parameters))))
                     self.biases.append(tf.get_variable("biases", [self.n_hidden[i]], initializer = tf.constant_initializer(0.0)))
                 elif i == len(self.n_hidden) - 1:
                     self.weights.append(tf.get_variable("weights", [self.n_hidden[i], self.N], initializer = tf.random_normal_initializer(0., np.sqrt(2./self.n_hidden[i]))))
@@ -166,9 +165,9 @@ class MixtureDensityNetwork:
                 self.layers.append(tf.add(tf.matmul(self.layers[-1], self.weights[-1]), self.biases[-1]))
 
         # Map the output layer to mixture model parameters
-        self.μ, self.σ, self.α = tf.split(self.layers[-1], [self.M * self.D, self.M * self.D * (self.D + 1) // 2, self.M], 1)
-        self.μ = tf.reshape(self.μ, (-1, self.M, self.D))
-        self.σ = tf.reshape(self.σ, (-1, self.M, self.D * (self.D + 1) // 2))
+        self.μ, self.σ, self.α = tf.split(self.layers[-1], [self.M * self.n_data, self.M * self.n_data * (self.n_data + 1) // 2, self.M], 1)
+        self.μ = tf.reshape(self.μ, (-1, self.M, self.n_data))
+        self.σ = tf.reshape(self.σ, (-1, self.M, self.n_data * (self.n_data + 1) // 2))
         self.α = tf.nn.softmax(self.α)
         self.Σ = tf.contrib.distributions.fill_triangular(self.σ)
         self.Σ = self.Σ - tf.linalg.diag(tf.linalg.diag_part(self.Σ)) + tf.linalg.diag(tf.exp(tf.linalg.diag_part(self.Σ)))
@@ -180,11 +179,10 @@ class MixtureDensityNetwork:
         self.det = tf.identity(self.det, name = "det")
         
         # Log likelihoods
-        self.L = tf.log(tf.reduce_sum(tf.exp(-0.5*tf.reduce_sum(tf.square(tf.einsum("ijlk,ijk->ijl", self.Σ, tf.subtract(tf.expand_dims(self.y, 1), self.μ))), 2) + tf.log(self.α) + tf.log(self.det) - self.D*np.log(2. * np.pi) / 2.), 1) + 1e-37, name = "L")
+        self.L = tf.log(tf.reduce_sum(tf.exp(-0.5*tf.reduce_sum(tf.square(tf.einsum("ijlk,ijk->ijl", self.Σ, tf.subtract(tf.expand_dims(self.data, 1), self.μ))), 2) + tf.log(self.α) + tf.log(self.det) - self.n_data*np.log(2. * np.pi) / 2.), 1) + 1e-37, name = "L")
 
         # Objective loss function
         self.trn_loss = -tf.reduce_mean(self.L, name = "trn_loss")
-        #self.trn_loss_reg = -tf.reduce_mean(tf.subtract(self.L, self.logpdf), name = "trn_loss_reg")
 
     def eval(self, xy, sess, log=True):
         """
@@ -196,7 +194,7 @@ class MixtureDensityNetwork:
         """
         
         x, y = xy
-        lprob = sess.run(self.L,feed_dict={self.input:x,self.y:y})
+        lprob = sess.run(self.L,feed_dict={self.parameters:x,self.data:y})
 
         return lprob if log else np.exp(lprob)
 

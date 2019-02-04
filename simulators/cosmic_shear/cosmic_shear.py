@@ -289,7 +289,7 @@ class TomographicCosmicShear():
     def compute_derivatives(self, theta_fiducial, step):
 
         # Holder for derivatives
-        dCdt = np.zeros((self.npar, self.nz, self.nz, self.n_ell_bins))
+        dCdt = np.zeros((self.npar, self.n_ell_bins, self.nz, self.nz))
 
         # Derivatives wrt cosmological parameters
         for i in range(self.npar):

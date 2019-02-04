@@ -255,7 +255,7 @@ def maps_to_cl_hat(field, l_min, l_max, sig_n_p, mask):
                                           lmax=l_max, mmax=l_max)[l_min:]
             c_l_hat[j, i, :] = c_l_hat[i, j, :]
 
-    return c_l_hat
+    return c_l_hat, field[-1, :] + npr.randn(n_pix) * np.sqrt(sig_n_p[-1,:])
 
 
 def simulate(theta, seed, simulator_args, batch):
@@ -291,7 +291,7 @@ def simulate(theta, seed, simulator_args, batch):
     for i in range(batch):
     
         # Realize noisy power spectrum
-        C_hat = maps_to_cl_hat(field, l_min, l_max, sig_n_p, mask)
+        C_hat, noisy_field = maps_to_cl_hat(field, l_min, l_max, sig_n_p, mask)
 
         # Bin up the power spectra
         l = np.linspace(l_min, l_max, l_max-l_min+1)
@@ -305,4 +305,4 @@ def simulate(theta, seed, simulator_args, batch):
             ind = np.nonzero(x)
             d = np.concatenate([d, x[ind]])
         sims[i,:] = d
-    return sims
+    return sims, field[-1,:], noisy_field
