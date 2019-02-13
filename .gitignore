@@ -8,3 +8,4 @@ cosmic_shear_preran_sims-IMNN.ipynb
 lotka-volterra.ipynb
 shear_map_mpi.ipynb
 IMNN.ipynb
+.ipynb_checkpoints*
