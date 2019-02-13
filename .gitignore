@@ -1,0 +1,16 @@
+bodelfi.ipynb
+cosmic_shear-IMNN (3D).ipynb
+cosmic_shear_darkenergy.ipynb
+cosmic_shear_darkenergy_nuisances.ipynb
+cosmic_shear_darkenergy_marginalized.ipynb
+cosmic_shear_map (iPyParallel).ipynb
+cosmic_shear_nuisances.ipynb
+cosmic_shear_marginalized.ipynb
+cosmic_shear_preran_sims-IMNN.ipynb
+lotka-volterra.ipynb
+shear_map_mpi.py
+IMNN.ipynb
+snl_cmb_lens_tom_class.ipynb
+snl_cmb_lens_tom_class_mpi.py
+.ipynb_checkpoints*
+.DS_Store
