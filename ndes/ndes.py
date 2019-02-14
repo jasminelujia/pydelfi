@@ -165,21 +165,21 @@ class MixtureDensityNetwork:
                 self.layers.append(tf.add(tf.matmul(self.layers[-1], self.weights[-1]), self.biases[-1]))
 
         # Map the output layer to mixture model parameters
-        self.μ, self.σ, self.α = tf.split(self.layers[-1], [self.M * self.n_data, self.M * self.n_data * (self.n_data + 1) // 2, self.M], 1)
-        self.μ = tf.reshape(self.μ, (-1, self.M, self.n_data))
-        self.σ = tf.reshape(self.σ, (-1, self.M, self.n_data * (self.n_data + 1) // 2))
-        self.α = tf.nn.softmax(self.α)
-        self.Σ = tf.contrib.distributions.fill_triangular(self.σ)
-        self.Σ = self.Σ - tf.linalg.diag(tf.linalg.diag_part(self.Σ)) + tf.linalg.diag(tf.exp(tf.linalg.diag_part(self.Σ)))
-        self.det = tf.reduce_prod(tf.linalg.diag_part(self.Σ), axis=-1)
+        self.mu, self.sigma, self.alpha = tf.split(self.layers[-1], [self.M * self.n_data, self.M * self.n_data * (self.n_data + 1) // 2, self.M], 1)
+        self.mu = tf.reshape(self.mu, (-1, self.M, self.n_data))
+        self.sigma = tf.reshape(self.sigma, (-1, self.M, self.n_data * (self.n_data + 1) // 2))
+        self.alpha = tf.nn.softmax(self.alpha)
+        self.Sigma = tf.contrib.distributions.fill_triangular(self.sigma)
+        self.Sigma = self.Sigma - tf.linalg.diag(tf.linalg.diag_part(self.Sigma)) + tf.linalg.diag(tf.exp(tf.linalg.diag_part(self.Sigma)))
+        self.det = tf.reduce_prod(tf.linalg.diag_part(self.Sigma), axis=-1)
 
-        self.μ = tf.identity(self.μ, name = "mu")
-        self.Σ = tf.identity(self.Σ, name = "Sigma")
-        self.α = tf.identity(self.α, name = "alpha")
+        self.mu = tf.identity(self.mu, name = "mu")
+        self.Sigma = tf.identity(self.Sigma, name = "Sigma")
+        self.alpha = tf.identity(self.alpha, name = "alpha")
         self.det = tf.identity(self.det, name = "det")
         
         # Log likelihoods
-        self.L = tf.log(tf.reduce_sum(tf.exp(-0.5*tf.reduce_sum(tf.square(tf.einsum("ijlk,ijk->ijl", self.Σ, tf.subtract(tf.expand_dims(self.data, 1), self.μ))), 2) + tf.log(self.α) + tf.log(self.det) - self.n_data*np.log(2. * np.pi) / 2.), 1) + 1e-37, name = "L")
+        self.L = tf.log(tf.reduce_sum(tf.exp(-0.5*tf.reduce_sum(tf.square(tf.einsum("ijlk,ijk->ijl", self.Sigma, tf.subtract(tf.expand_dims(self.data, 1), self.mu))), 2) + tf.log(self.alpha) + tf.log(self.det) - self.n_data*np.log(2. * np.pi) / 2.), 1) + 1e-37, name = "L")
 
         # Objective loss function
         self.trn_loss = -tf.reduce_mean(self.L, name = "trn_loss")
