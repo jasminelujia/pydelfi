@@ -94,10 +94,10 @@ class Gaussian():
         # Run the simulations with MPI
         if progress_bar:
             if self.nb:
-                pbar = tqdm.tqdm_notebook(total = inds[-1], desc = "Covariance simulations")
+                pbar = tqdm.tqdm_notebook(total = inds[-1]+1, desc = "Covariance simulations")
             else:
-                pbar = tqdm.tqdm(total = inds[-1], desc = "Covariance simulations")
-        for i in range(inds[-1]):
+                pbar = tqdm.tqdm(total = inds[-1]+1, desc = "Covariance simulations")
+        for i in range(inds[-1]+1):
             seed = seed_generator()
             sims[i*sub_batch:i*sub_batch+sub_batch,:] = simulator(self.theta_fiducial, seed, simulator_args, sub_batch)
             if progress_bar:

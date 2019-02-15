@@ -1,2 +1,2 @@
-model_checkpoint_path: "score_tmp_model"
-all_model_checkpoint_paths: "score_tmp_model"
+model_checkpoint_path: "imnn_mdntmp_model"
+all_model_checkpoint_paths: "imnn_mdntmp_model"
