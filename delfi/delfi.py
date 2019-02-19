@@ -317,7 +317,7 @@ class Delfi():
     def emcee_sample(self, log_likelihood, x0, burn_in_chain=100, main_chain=100):
     
         # Set up the sampler
-        sampler = emcee.EnsembleSampler(self.nwalkers, self.D, log_likelihood)
+        sampler = emcee.EnsembleSampler(self.nwalkers, self.npar, log_likelihood)
     
         # Burn-in chain
         pos, prob, state = sampler.run_mcmc(x0, burn_in_chain)
