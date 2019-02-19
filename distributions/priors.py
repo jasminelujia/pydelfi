@@ -50,7 +50,7 @@ class Uniform():
     def logpdf(self, x):
 
         inrange = np.prod(x > self.lower)*np.prod(x < self.upper)
-        return inrange*np.log(np.prod(self.upper-self.lower)) - (1 - inrange)*np.inf
+        return inrange*np.log(np.prod(self.upper-self.lower)) - (1 - inrange)*1e300
     
     def pdf(self, x):
         
